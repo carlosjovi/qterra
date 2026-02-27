@@ -32,3 +32,14 @@ export interface GeoJSON {
   type: string;
   features: GeoFeature[];
 }
+
+export interface PlaceDetails {
+  name?: string;
+  address?: string;
+  phone?: string;
+  website?: string;
+  hours?: string[];
+  isOpen?: boolean;
+  photoUrl?: string; // proxy URL via /api/places/photo
+  mapsUrl?: string;
+}

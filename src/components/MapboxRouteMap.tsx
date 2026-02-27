@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import mapboxgl from "mapbox-gl";
-import type { Coordinate } from "@/lib/types";
+import type { Coordinate, PlaceDetails } from "@/lib/types";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -53,6 +53,8 @@ const CONGESTION_COLORS: Record<string, string> = {
 export default function MapboxRouteMap({ origin, destination, mapboxToken, onClose }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
+  const originMarkerRef = useRef<mapboxgl.Marker | null>(null);
+  const destMarkerRef = useRef<mapboxgl.Marker | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [route, setRoute] = useState<RouteInfo | null>(null);
   const [loading, setLoading] = useState(true);
@@ -61,6 +63,8 @@ export default function MapboxRouteMap({ origin, destination, mapboxToken, onClo
   const [profile, setProfile] = useState<"driving-traffic" | "driving" | "walking" | "cycling">(
     "driving-traffic",
   );
+  const [originPlace, setOriginPlace] = useState<PlaceDetails | null>(null);
+  const [destinationPlace, setDestinationPlace] = useState<PlaceDetails | null>(null);
 
   /* ---- fetch route ---- */
   const fetchRoute = useCallback(async () => {
@@ -250,23 +254,64 @@ export default function MapboxRouteMap({ origin, destination, mapboxToken, onClo
     // Markers
     const originEl = markerElement("A", "#4CAF50");
     originEl.className += " mapbox-route-marker";
-    new mapboxgl.Marker({ element: originEl })
+    const originMarker = new mapboxgl.Marker({ element: originEl })
       .setLngLat([origin.lng, origin.lat])
-      .setPopup(new mapboxgl.Popup({ offset: 25 }).setText(origin.label))
+      .setPopup(
+        new mapboxgl.Popup({ offset: 25, maxWidth: "260px" }).setHTML(
+          buildPopupHTML(origin.label, originPlace)
+        )
+      )
       .addTo(map);
+    originMarkerRef.current = originMarker;
 
     const destEl = markerElement("B", "#F44336");
     destEl.className += " mapbox-route-marker";
-    new mapboxgl.Marker({ element: destEl })
+    const destMarker = new mapboxgl.Marker({ element: destEl })
       .setLngLat([destination.lng, destination.lat])
-      .setPopup(new mapboxgl.Popup({ offset: 25 }).setText(destination.label))
+      .setPopup(
+        new mapboxgl.Popup({ offset: 25, maxWidth: "260px" }).setHTML(
+          buildPopupHTML(destination.label, destinationPlace)
+        )
+      )
       .addTo(map);
+    destMarkerRef.current = destMarker;
 
     // Fit bounds
     const bounds = new mapboxgl.LngLatBounds();
     info.geometry.coordinates.forEach((c) => bounds.extend(c as [number, number]));
     map.fitBounds(bounds, { padding: 60, duration: 1000 });
   };
+
+  /* ---- fetch place details for origin & destination on mount ---- */
+  useEffect(() => {
+    async function fetchPlace(lat: number, lng: number, setter: (p: PlaceDetails) => void) {
+      try {
+        const res = await fetch(`/api/places?lat=${lat}&lng=${lng}`);
+        if (res.ok) {
+          const data: PlaceDetails = await res.json();
+          setter(data);
+        }
+      } catch {
+        // silently ignore; popup will show label only
+      }
+    }
+    fetchPlace(origin.lat, origin.lng, setOriginPlace);
+    fetchPlace(destination.lat, destination.lng, setDestinationPlace);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ---- update origin popup when place details arrive ---- */
+  useEffect(() => {
+    const marker = originMarkerRef.current;
+    if (!marker || !originPlace) return;
+    marker.getPopup()?.setHTML(buildPopupHTML(origin.label, originPlace));
+  }, [originPlace]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ---- update destination popup when place details arrive ---- */
+  useEffect(() => {
+    const marker = destMarkerRef.current;
+    if (!marker || !destinationPlace) return;
+    marker.getPopup()?.setHTML(buildPopupHTML(destination.label, destinationPlace));
+  }, [destinationPlace]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ---- resize map when container size changes ---- */
   useEffect(() => {
@@ -427,6 +472,69 @@ export default function MapboxRouteMap({ origin, destination, mapboxToken, onClo
       <div ref={containerRef} style={{ flex: 1 }} />
     </div>
   );
+}
+
+/* ---- rich popup HTML builder ---- */
+function buildPopupHTML(label: string, place: PlaceDetails | null): string {
+  const name = place?.name ?? label;
+  const escapedName = name.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+  const photoHtml = place?.photoUrl
+    ? `<img src="${place.photoUrl}" alt="${escapedName}"
+         style="width:100%;height:130px;object-fit:cover;border-radius:6px 6px 0 0;display:block;" />`
+    : "";
+
+  const openBadge =
+    place?.isOpen === true
+      ? `<span style="color:#4caf50;font-size:11px;font-weight:600;margin-left:6px;">Open</span>`
+      : place?.isOpen === false
+      ? `<span style="color:#f44336;font-size:11px;font-weight:600;margin-left:6px;">Closed</span>`
+      : "";
+
+  const addressHtml = place?.address
+    ? `<p style="margin:4px 0;font-size:12px;">📍 ${place.address.replace(/</g, "&lt;")}</p>`
+    : "";
+
+  const phoneHtml = place?.phone
+    ? `<p style="margin:4px 0;font-size:12px;">📞 <a href="tel:${place.phone}" style="color:#1a73e8;text-decoration:none;">${place.phone}</a></p>`
+    : "";
+
+  const hoursHtml =
+    place?.hours?.length
+      ? `<details style="margin:4px 0;font-size:11px;color:#444;">
+           <summary style="cursor:pointer;user-select:none;color:#555;font-size:11px;">🕐 Hours</summary>
+           <ul style="margin:4px 0 0 0;padding-left:14px;line-height:1.6;">${place.hours.map((h) => `<li>${h.replace(/</g, "&lt;")}</li>`).join("")}</ul>
+         </details>`
+      : "";
+
+  const websiteHtml = place?.website
+    ? `<a href="${place.website}" target="_blank" rel="noopener noreferrer"
+         style="display:inline-block;margin-top:4px;font-size:12px;color:#1a73e8;text-decoration:none;">
+         🌐 Website
+       </a>`
+      : "";
+
+  const mapsHtml = place?.mapsUrl
+    ? `<a href="${place.mapsUrl}" target="_blank" rel="noopener noreferrer"
+         style="display:inline-block;margin-top:4px;margin-left:${place.website ? "8px" : "0"};font-size:12px;color:#1a73e8;text-decoration:none;">
+         🗺 View on Maps
+       </a>`
+    : "";
+
+  return `
+    <div style="font-family:system-ui,-apple-system,sans-serif;color:#1a1a1a;min-width:200px;max-width:260px;overflow:hidden;border-radius:6px;">
+      ${photoHtml}
+      <div style="padding:${photoHtml ? "8px 10px 10px" : "10px"};background:#fff;">
+        <div style="display:flex;align-items:baseline;flex-wrap:wrap;gap:2px;">
+          <strong style="font-size:14px;line-height:1.3;">${escapedName}</strong>
+          ${openBadge}
+        </div>
+        ${addressHtml}
+        ${phoneHtml}
+        ${hoursHtml}
+        <div>${websiteHtml}${mapsHtml}</div>
+      </div>
+    </div>`;
 }
 
 /* ---- marker element builder ---- */
