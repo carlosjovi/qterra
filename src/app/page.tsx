@@ -19,6 +19,7 @@ export default function Home() {
   const [autoRotate, setAutoRotate] = useState(true);
   const [rotationSpeed, setRotationSpeed] = useState(1);
   const [focusTarget, setFocusTarget] = useState<Coordinate | null>(null);
+  const [showGrid, setShowGrid] = useState(true);
 
   // Routing state
   const [routeOrigin, setRouteOrigin] = useState<Coordinate | null>(null);
@@ -82,6 +83,8 @@ export default function Home() {
           onSpeedChange={setRotationSpeed}
           onRoute={handleRoute}
           routeActive={showRouteMap}
+          showGrid={showGrid}
+          onToggleGrid={() => setShowGrid((p) => !p)}
         />
       </aside>
 
@@ -92,6 +95,7 @@ export default function Home() {
           autoRotate={autoRotate}
           rotationSpeed={rotationSpeed}
           focusTarget={focusTarget}
+          showGrid={showGrid}
         />
 
         {/* Mapbox street-level route overlay */}

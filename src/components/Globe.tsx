@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useEffect, useState, useCallback, useMemo } from "react";
+import { useRef, useEffect, useState, useCallback } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import ThreeGlobe from "three-globe";
@@ -16,15 +16,18 @@ function GlobeObject({
   autoRotate,
   rotationSpeed,
   focusTarget,
+  showGrid,
   onGlobeReady,
 }: {
   coordinates: Coordinate[];
   autoRotate: boolean;
   rotationSpeed: number;
   focusTarget: Coordinate | null;
+  showGrid: boolean;
   onGlobeReady?: () => void;
 }) {
   const globeRef = useRef<ThreeGlobe | null>(null);
+  const gridGroupRef = useRef<THREE.Group | null>(null);
   const groupRef = useRef<THREE.Group>(null!);
   const controlsRef = useRef<any>(null);
   const { camera } = useThree();
@@ -41,6 +44,18 @@ function GlobeObject({
   // build globe mesh
   useEffect(() => {
     if (!geoData) return;
+
+    // -- helpers for ThreeGlobe's coordinate system --
+    // ThreeGlobe maps: phi = (90-lat)*PI/180, theta = (90+lng)*PI/180
+    const toXYZ = (lat: number, lng: number, r: number): THREE.Vector3 => {
+      const phi = (90 - lat) * (Math.PI / 180);
+      const theta = (90 + lng) * (Math.PI / 180);
+      return new THREE.Vector3(
+        r * Math.sin(phi) * Math.cos(theta),
+        r * Math.cos(phi),
+        r * Math.sin(phi) * Math.sin(theta)
+      );
+    };
 
     const globe = new ThreeGlobe()
       // vector-line country outlines
@@ -97,13 +112,91 @@ function GlobeObject({
 
     globeRef.current = globe;
 
+    // -- build accurate lat/lng grid attached to the globe group --
+    const GRID_R = 101.2; // just above the globe surface (radius = 100)
+
+    // Special geographic parallels and meridians
+    const EQUATOR = 0;
+    const TROPICS = [23.5, -23.5];
+    const POLAR_CIRCLES = [66.5, -66.5];
+    const specialLats = new Set([EQUATOR, ...TROPICS, ...POLAR_CIRCLES]);
+
+    const gridGroup = new THREE.Group();
+
+    // Materials
+    const baseMat = new THREE.LineBasicMaterial({
+      color: 0x7a4a18,
+      transparent: true,
+      opacity: 0.9,
+    });
+    const equatorMat = new THREE.LineBasicMaterial({
+      color: 0xff8800,
+      transparent: true,
+      opacity: 0.9,
+    });
+    const tropicMat = new THREE.LineBasicMaterial({
+      color: 0xcc6600,
+      transparent: true,
+      opacity: 0.75,
+    });
+    const primeMat = new THREE.LineBasicMaterial({
+      color: 0xff8800,
+      transparent: true,
+      opacity: 0.9,
+    });
+
+    // Latitude lines: every 15°, special ones highlighted
+    const latStops: number[] = [];
+    for (let lat = -75; lat <= 75; lat += 15) latStops.push(lat);
+    // Also add tropics and polar circles if not already present
+    for (const sl of [...TROPICS, ...POLAR_CIRCLES]) {
+      if (!latStops.includes(sl)) latStops.push(sl);
+    }
+
+    for (const lat of latStops) {
+      const mat =
+        lat === EQUATOR ? equatorMat
+        : TROPICS.includes(lat) ? tropicMat
+        : POLAR_CIRCLES.includes(lat) ? tropicMat
+        : baseMat;
+
+      const points: THREE.Vector3[] = [];
+      for (let lng = -180; lng <= 180; lng += 1) {
+        points.push(toXYZ(lat, lng, GRID_R));
+      }
+      const geom = new THREE.BufferGeometry().setFromPoints(points);
+      gridGroup.add(new THREE.Line(geom, mat));
+    }
+
+    // Longitude lines: every 15°, prime meridian highlighted
+    for (let lng = -180; lng < 180; lng += 15) {
+      const isPrime = lng === 0;
+      const mat = isPrime ? primeMat : baseMat;
+      const points: THREE.Vector3[] = [];
+      for (let lat = -90; lat <= 90; lat += 1) {
+        points.push(toXYZ(lat, lng, GRID_R));
+      }
+      const geom = new THREE.BufferGeometry().setFromPoints(points);
+      gridGroup.add(new THREE.Line(geom, mat));
+    }
+
     // clear previous children & add
     while (groupRef.current.children.length) {
       groupRef.current.remove(groupRef.current.children[0]);
     }
     groupRef.current.add(globe);
+    groupRef.current.add(gridGroup);
+    gridGroupRef.current = gridGroup;
+    gridGroup.visible = showGrid;
     onGlobeReady?.();
-  }, [geoData, coordinates, onGlobeReady]);
+  }, [geoData, coordinates, onGlobeReady]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Toggle grid visibility without rebuilding
+  useEffect(() => {
+    if (gridGroupRef.current) {
+      gridGroupRef.current.visible = showGrid;
+    }
+  }, [showGrid]);
 
   // auto-rotate
   useFrame(() => {
@@ -177,67 +270,6 @@ function easeInOutCubic(t: number) {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
 
-// ---------- grid / wireframe layers ----------
-function WireframeGrid() {
-  const ref = useRef<THREE.Group>(null!);
-
-  const lineObjects = useMemo(() => {
-    const objects: THREE.Line[] = [];
-    const R = 100.5; // just slightly above globe radius
-    const mat = new THREE.LineBasicMaterial({
-      color: 0x3d2800,
-      transparent: true,
-      opacity: 1,
-    });
-
-    // latitude lines every 20°
-    for (let lat = -80; lat <= 80; lat += 20) {
-      const phi = (90 - lat) * (Math.PI / 180);
-      const points: THREE.Vector3[] = [];
-      for (let lng = 0; lng <= 360; lng += 2) {
-        const theta = lng * (Math.PI / 180);
-        points.push(
-          new THREE.Vector3(
-            R * Math.sin(phi) * Math.cos(theta),
-            R * Math.cos(phi),
-            R * Math.sin(phi) * Math.sin(theta)
-          )
-        );
-      }
-      const geom = new THREE.BufferGeometry().setFromPoints(points);
-      objects.push(new THREE.Line(geom, mat));
-    }
-
-    // longitude lines every 30°
-    for (let lng = 0; lng < 360; lng += 30) {
-      const theta = lng * (Math.PI / 180);
-      const points: THREE.Vector3[] = [];
-      for (let lat = -90; lat <= 90; lat += 2) {
-        const phi = (90 - lat) * (Math.PI / 180);
-        points.push(
-          new THREE.Vector3(
-            R * Math.sin(phi) * Math.cos(theta),
-            R * Math.cos(phi),
-            R * Math.sin(phi) * Math.sin(theta)
-          )
-        );
-      }
-      const geom = new THREE.BufferGeometry().setFromPoints(points);
-      objects.push(new THREE.Line(geom, mat));
-    }
-
-    return objects;
-  }, []);
-
-  return (
-    <group ref={ref}>
-      {lineObjects.map((obj, i) => (
-        <primitive key={i} object={obj} />
-      ))}
-    </group>
-  );
-}
-
 // ---------- scene lighting ----------
 function Lighting() {
   return (
@@ -256,11 +288,13 @@ export default function Globe({
   autoRotate = true,
   rotationSpeed = 1,
   focusTarget = null,
+  showGrid = true,
 }: {
   coordinates?: Coordinate[];
   autoRotate?: boolean;
   rotationSpeed?: number;
   focusTarget?: Coordinate | null;
+  showGrid?: boolean;
 }) {
   const [ready, setReady] = useState(false);
   const handleReady = useCallback(() => setReady(true), []);
@@ -280,12 +314,12 @@ export default function Globe({
       >
         <color attach="background" args={["#0d0d0d"]} />
         <Lighting />
-        <WireframeGrid />
         <GlobeObject
           coordinates={coordinates}
           autoRotate={autoRotate}
           rotationSpeed={rotationSpeed}
           focusTarget={focusTarget}
+          showGrid={showGrid}
           onGlobeReady={handleReady}
         />
       </Canvas>

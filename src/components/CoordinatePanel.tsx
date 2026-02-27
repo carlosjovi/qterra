@@ -21,6 +21,7 @@ import {
   ResumeIcon,
   PauseIcon,
   RocketIcon,
+  GridIcon,
 } from "@radix-ui/react-icons";
 import * as SliderPrimitive from "@radix-ui/react-slider";
 import type { Coordinate } from "@/lib/types";
@@ -38,6 +39,8 @@ export default function CoordinatePanel({
   onSpeedChange,
   onRoute,
   routeActive,
+  showGrid,
+  onToggleGrid,
 }: {
   coordinates: Coordinate[];
   onAdd: (c: Coordinate) => void;
@@ -49,6 +52,8 @@ export default function CoordinatePanel({
   onSpeedChange: (speed: number) => void;
   onRoute: (origin: Coordinate, destination: Coordinate) => void;
   routeActive: boolean;
+  showGrid: boolean;
+  onToggleGrid: () => void;
 }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [geocoding, setGeocoding] = useState(false);
@@ -114,6 +119,17 @@ export default function CoordinatePanel({
             >
               {autoRotate ? <PauseIcon /> : <ResumeIcon />}
               {autoRotate ? "Pause" : "Rotate"}
+            </Button>
+          </Tooltip>
+          <Tooltip content={showGrid ? "Hide grid lines" : "Show grid lines"}>
+            <Button
+              variant={showGrid ? "solid" : "soft"}
+              size="1"
+              color="amber"
+              onClick={onToggleGrid}
+            >
+              <GridIcon />
+              Grid
             </Button>
           </Tooltip>
 
