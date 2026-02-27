@@ -33,6 +33,7 @@ export default function CoordinatePanel({
   onAdd,
   onRemove,
   onFocus,
+  onSelect,
   autoRotate,
   onToggleRotate,
   rotationSpeed,
@@ -46,6 +47,7 @@ export default function CoordinatePanel({
   onAdd: (c: Coordinate) => void;
   onRemove: (id: string) => void;
   onFocus: (c: Coordinate) => void;
+  onSelect: (c: Coordinate) => void;
   autoRotate: boolean;
   onToggleRotate: () => void;
   rotationSpeed: number;
@@ -217,9 +219,9 @@ export default function CoordinatePanel({
                   py="1"
                   className="rounded-md bg-[--gray-a3] group hover:bg-[--gray-a4] transition-colors"
                 >
-                  <Tooltip content={`Focus on ${c.label}`}>
+                  <Tooltip content={`View details for ${c.label}`}>
                     <button
-                      onClick={() => onFocus(c)}
+                      onClick={() => onSelect(c)}
                       className="flex-1 text-left text-xs truncate hover:text-[--accent-11] transition-colors"
                     >
                       <span

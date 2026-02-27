@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { saveDirectionsResult } from "@/lib/db";
 
 /**
  * GET /api/directions?originLng=...&originLat=...&destLng=...&destLat=...&profile=driving-traffic
@@ -42,6 +43,20 @@ export async function GET(req: NextRequest) {
         { error: data.message || "Mapbox Directions API error" },
         { status: res.status },
       );
+    }
+
+    // Persist to local DB
+    try {
+      saveDirectionsResult(
+        parseFloat(originLat),
+        parseFloat(originLng),
+        parseFloat(destLat),
+        parseFloat(destLng),
+        profile,
+        data,
+      );
+    } catch (e) {
+      console.error("[db] directions save error:", e);
     }
 
     return NextResponse.json(data);

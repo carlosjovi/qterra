@@ -39,6 +39,7 @@
 | Styling | [Tailwind CSS v4](https://tailwindcss.com) |
 | Geocoding | Google Maps Geocoding API (+ MapQuest fallback) |
 | Directions | Mapbox Directions API (server-side proxy) |
+| Local Database | [SQLite](https://sqlite.org) via [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) |
 
 ---
 
@@ -120,6 +121,8 @@ All keys live in `.env.local`, which is **never committed** (covered by `.gitign
 ## Project Structure
 
 ```
+data/
+└── README.md                   # Database docs (qterra.db is git-ignored)
 src/
 ├── app/
 │   ├── layout.tsx              # Root layout — Radix Theme, fonts
@@ -127,14 +130,33 @@ src/
 │   ├── globals.css             # Tailwind + global overrides
 │   └── api/
 │       ├── geocode/route.ts    # Server-side geocoding proxy
-│       └── directions/route.ts # Server-side Mapbox Directions proxy
+│       ├── directions/route.ts # Server-side Mapbox Directions proxy
+│       └── places/
+│           ├── route.ts        # Google Nearby + Place Details proxy
+│           └── photo/route.ts  # Google Places photo proxy
 ├── components/
 │   ├── Globe.tsx               # Three.js / three-globe canvas component
 │   ├── CoordinatePanel.tsx     # Sidebar: search, pin list, route controls
 │   └── MapboxRouteMap.tsx      # Mapbox GL overlay with route + congestion
 └── lib/
+    ├── db.ts                   # SQLite database layer (caching + persistence)
     └── types.ts                # Shared TypeScript interfaces
 ```
+
+---
+
+## Local Database
+
+Qterra automatically caches every API response in a local SQLite database (`data/qterra.db`). This gives you:
+
+- **Recent searches** — all geocoding queries are stored and queryable.
+- **Saved locations** — place details and photos are persisted locally.
+- **Offline dev / mock data** — once you've fetched data, you can work without hitting external APIs.
+- **Photo caching** — place photos are served from the local DB on repeat requests, saving Google API quota.
+
+The database file is **git-ignored** — only the `data/README.md` with schema documentation is committed. The DB is created automatically on the first API call; no manual setup is needed.
+
+See [data/README.md](data/README.md) for the full schema reference and inspection tips.
 
 ---
 

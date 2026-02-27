@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { saveGeocodeResult } from "@/lib/db";
 
 export async function GET(req: NextRequest) {
   const query = req.nextUrl.searchParams.get("q")?.trim();
@@ -15,14 +16,17 @@ export async function GET(req: NextRequest) {
       const data = await res.json();
 
       if (data.results?.length) {
-        return NextResponse.json({
-          results: data.results.map((r: any) => ({
-            lat: r.geometry.location.lat,
-            lng: r.geometry.location.lng,
-            name: r.formatted_address?.split(",")[0] ?? query,
-            fullAddress: r.formatted_address ?? "",
-          })),
-        });
+        const results = data.results.map((r: any) => ({
+          lat: r.geometry.location.lat,
+          lng: r.geometry.location.lng,
+          name: r.formatted_address?.split(",")[0] ?? query,
+          fullAddress: r.formatted_address ?? "",
+        }));
+
+        // Persist to local DB
+        try { saveGeocodeResult(query, "google", results, data); } catch (e) { console.error("[db] geocode save error:", e); }
+
+        return NextResponse.json({ results });
       }
     } catch (err) {
       console.error("Google geocoding failed, falling back to MapQuest:", err);
@@ -39,14 +43,17 @@ export async function GET(req: NextRequest) {
       const locations = data.results?.[0]?.locations;
 
       if (locations?.length) {
-        return NextResponse.json({
-          results: locations.map((loc: any) => ({
-            lat: loc.latLng.lat,
-            lng: loc.latLng.lng,
-            name: loc.adminArea5 || loc.adminArea3 || query,
-            fullAddress: [loc.adminArea5, loc.adminArea3, loc.adminArea1].filter(Boolean).join(", "),
-          })),
-        });
+        const results = locations.map((loc: any) => ({
+          lat: loc.latLng.lat,
+          lng: loc.latLng.lng,
+          name: loc.adminArea5 || loc.adminArea3 || query,
+          fullAddress: [loc.adminArea5, loc.adminArea3, loc.adminArea1].filter(Boolean).join(", "),
+        }));
+
+        // Persist to local DB
+        try { saveGeocodeResult(query, "mapquest", results, data); } catch (e) { console.error("[db] geocode save error:", e); }
+
+        return NextResponse.json({ results });
       }
     } catch (err) {
       console.error("MapQuest geocoding also failed:", err);

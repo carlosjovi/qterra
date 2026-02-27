@@ -16,8 +16,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Globe Explorer",
-  description: "Interactive 3D globe with coordinate highlighting",
+  title: "QTERRA - Map Explorer",
+  description: "Interactive Next.js 3D globe with data visualization",
 };
 
 export default function RootLayout({

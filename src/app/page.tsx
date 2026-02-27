@@ -4,6 +4,7 @@ import { useState, useCallback } from "react";
 import dynamic from "next/dynamic";
 import { Box, Flex, Heading, Text, Separator } from "@radix-ui/themes";
 import CoordinatePanel from "@/components/CoordinatePanel";
+import PointDetailPane from "@/components/PointDetailPane";
 import type { Coordinate } from "@/lib/types";
 
 // three-globe / R3F can't SSR – dynamic import with ssr: false
@@ -13,6 +14,7 @@ const Globe = dynamic(() => import("@/components/Globe"), { ssr: false });
 const MapboxRouteMap = dynamic(() => import("@/components/MapboxRouteMap"), { ssr: false });
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN ?? "";
+const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
 
 export default function Home() {
   const [coordinates, setCoordinates] = useState<Coordinate[]>([]);
@@ -20,6 +22,7 @@ export default function Home() {
   const [rotationSpeed, setRotationSpeed] = useState(1);
   const [focusTarget, setFocusTarget] = useState<Coordinate | null>(null);
   const [showGrid, setShowGrid] = useState(true);
+  const [selectedPoint, setSelectedPoint] = useState<Coordinate | null>(null);
 
   // Routing state
   const [routeOrigin, setRouteOrigin] = useState<Coordinate | null>(null);
@@ -45,6 +48,8 @@ export default function Home() {
     // Clear route if a routed point is removed
     setRouteOrigin((prev) => (prev?.id === id ? null : prev));
     setRouteDestination((prev) => (prev?.id === id ? null : prev));
+    // Close detail pane if this point was selected
+    setSelectedPoint((prev) => (prev?.id === id ? null : prev));
   }, []);
 
   const handleFocus = useCallback((c: Coordinate) => {
@@ -62,6 +67,21 @@ export default function Home() {
     setRouteDestination(null);
   }, []);
 
+  const handleSelectPoint = useCallback((c: Coordinate) => {
+    setSelectedPoint(c);
+    setAutoRotate(false);
+    setFocusTarget({ ...c });
+  }, []);
+
+  const handleRename = useCallback((id: string, newLabel: string) => {
+    setCoordinates((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, label: newLabel } : c))
+    );
+    setSelectedPoint((prev) =>
+      prev?.id === id ? { ...prev, label: newLabel } : prev
+    );
+  }, []);
+
   return (
     <main className="flex h-screen w-screen overflow-hidden bg-[#020a14]">
       {/* sidebar */}
@@ -77,6 +97,7 @@ export default function Home() {
           onAdd={handleAdd}
           onRemove={handleRemove}
           onFocus={handleFocus}
+          onSelect={handleSelectPoint}
           autoRotate={autoRotate}
           onToggleRotate={() => setAutoRotate((p) => !p)}
           rotationSpeed={rotationSpeed}
@@ -87,6 +108,18 @@ export default function Home() {
           onToggleGrid={() => setShowGrid((p) => !p)}
         />
       </aside>
+
+      {/* point detail pane */}
+      {selectedPoint && (
+        <PointDetailPane
+          key={selectedPoint.id}
+          coordinate={selectedPoint}
+          onClose={() => setSelectedPoint(null)}
+          onFocus={handleFocus}
+          onRename={handleRename}
+          googleMapsApiKey={GOOGLE_MAPS_API_KEY || undefined}
+        />
+      )}
 
       {/* globe viewport */}
       <div className="flex-1 relative">

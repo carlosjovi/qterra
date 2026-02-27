@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { savePlacePhoto, findPlacePhoto } from "@/lib/db";
 
 const GOOGLE_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
 
@@ -17,6 +18,23 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "ref is required" }, { status: 400 });
   }
 
+  // ── Check cache first ──────────────────────────────────────────────
+  try {
+    const cached = findPlacePhoto(ref);
+    if (cached) {
+      return new NextResponse(new Uint8Array(cached.data), {
+        headers: {
+          "Content-Type": cached.content_type,
+          "Cache-Control": "public, max-age=86400",
+          "X-Cache": "HIT",
+        },
+      });
+    }
+  } catch (e) {
+    console.error("[db] photo lookup error:", e);
+  }
+
+  // ── Fetch from Google ──────────────────────────────────────────────
   const photoUrl = new URL("https://maps.googleapis.com/maps/api/place/photo");
   photoUrl.searchParams.set("maxwidth", "640");
   photoUrl.searchParams.set("photoreference", ref);
@@ -30,6 +48,13 @@ export async function GET(req: NextRequest) {
 
   const buffer = await res.arrayBuffer();
   const contentType = res.headers.get("content-type") ?? "image/jpeg";
+
+  // Persist to local DB
+  try {
+    savePlacePhoto(ref, contentType, Buffer.from(buffer));
+  } catch (e) {
+    console.error("[db] photo save error:", e);
+  }
 
   return new NextResponse(buffer, {
     headers: {

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { savePlaceResult } from "@/lib/db";
 
 const GOOGLE_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
 
@@ -67,6 +68,28 @@ export async function GET(req: NextRequest) {
     const photoUrl = photoRef
       ? `/api/places/photo?ref=${encodeURIComponent(photoRef)}`
       : undefined;
+
+    // Persist to local DB
+    try {
+      savePlaceResult(
+        parseFloat(lat),
+        parseFloat(lng),
+        placeId,
+        {
+          name: r.name,
+          address: r.formatted_address,
+          phone: r.formatted_phone_number,
+          website: r.website,
+          mapsUrl: r.url,
+          hours: r.opening_hours?.weekday_text,
+          isOpen: r.opening_hours?.open_now,
+          photoRef,
+        },
+        { nearby: nearbyData, details: detailsData },
+      );
+    } catch (e) {
+      console.error("[db] place save error:", e);
+    }
 
     return NextResponse.json({
       name: r.name,
