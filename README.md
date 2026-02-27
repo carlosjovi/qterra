@@ -19,6 +19,14 @@
 
 ---
 
+## Screenshots
+
+![3D Globe with animated arc and Mapbox panel](public/screenshots/three-globe-arc-mapbox-panel.jpg)
+
+![Mapbox GL JS routing overlay with live traffic congestion](public/screenshots/mapbox-gl-js-routing.jpg)
+
+---
+
 ## Tech Stack
 
 | Layer | Library / Tool |
