@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import { Box, Flex, Heading, Text, Separator } from "@radix-ui/themes";
 import CoordinatePanel from "@/components/CoordinatePanel";
 import PointDetailPane from "@/components/PointDetailPane";
-import type { Coordinate } from "@/lib/types";
+import type { Coordinate, Flight } from "@/lib/types";
 
 // three-globe / R3F can't SSR – dynamic import with ssr: false
 const Globe = dynamic(() => import("@/components/Globe"), { ssr: false });
@@ -29,6 +29,80 @@ export default function Home() {
   const [routeOrigin, setRouteOrigin] = useState<Coordinate | null>(null);
   const [routeDestination, setRouteDestination] = useState<Coordinate | null>(null);
   const showRouteMap = !!(routeOrigin && routeDestination && MAPBOX_TOKEN);
+
+  // Flight tracking state
+  const [flights, setFlights] = useState<Flight[]>([]);
+  const [flightsEnabled, setFlightsEnabled] = useState(false);
+  const [flightsLoading, setFlightsLoading] = useState(false);
+  const [flightsError, setFlightsError] = useState<string | null>(null);
+  const [selectedFlightIcao, setSelectedFlightIcao] = useState<string | null>(null);
+  const [globeFlights, setGlobeFlights] = useState<Flight[]>([]);
+  const flightTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const fetchFlights = useCallback(async () => {
+    setFlightsLoading(true);
+    setFlightsError(null);
+    try {
+      const res = await fetch("/api/flights");
+      const data = await res.json();
+      if (res.ok) {
+        setFlights(data.flights ?? []);
+      } else {
+        setFlightsError(data.error ?? `API error ${res.status}`);
+      }
+    } catch (err) {
+      setFlightsError("Network error — retrying…");
+    } finally {
+      setFlightsLoading(false);
+    }
+  }, []);
+
+  // Auto-polling when enabled
+  useEffect(() => {
+    if (flightsEnabled) {
+      fetchFlights();
+      flightTimerRef.current = setInterval(fetchFlights, 15_000); // refresh every 15 s
+    } else {
+      setFlights([]);
+      setSelectedFlightIcao(null);
+      if (flightTimerRef.current) clearInterval(flightTimerRef.current);
+    }
+    return () => {
+      if (flightTimerRef.current) clearInterval(flightTimerRef.current);
+    };
+  }, [flightsEnabled, fetchFlights]);
+
+  const handleToggleFlights = useCallback(() => {
+    setFlightsEnabled((p) => !p);
+  }, []);
+
+  // Only render flights on the globe once the user applies a filter,
+  // but always preserve the selected flight so it doesn't vanish on refresh.
+  const handleVisibleFlightsChange = useCallback((visible: Flight[], hasFilter: boolean) => {
+    setGlobeFlights((prev) => {
+      const base = hasFilter ? visible : [];
+      // If a flight is selected, ensure it stays on the globe
+      if (selectedFlightIcao && !base.some((f) => f.icao24 === selectedFlightIcao)) {
+        const fresh = visible.find((f) => f.icao24 === selectedFlightIcao)
+          ?? prev.find((f) => f.icao24 === selectedFlightIcao);
+        if (fresh) return [...base, fresh];
+      }
+      return base;
+    });
+  }, [selectedFlightIcao]);
+
+  const handleSelectFlight = useCallback((f: Flight | null) => {
+    setSelectedFlightIcao(f?.icao24 ?? null);
+    if (f) {
+      setAutoRotate(false);
+      setFocusTarget({ id: `__flight_${f.icao24}`, lat: f.lat, lng: f.lng, label: f.callsign || f.icao24 });
+      // Ensure the selected flight is visible on the globe even without a filter
+      setGlobeFlights((prev) => {
+        const without = prev.filter((p) => p.icao24 !== f.icao24);
+        return [...without, f];
+      });
+    }
+  }, []);
 
   const handleAdd = useCallback((c: Coordinate) => {
     setCoordinates((prev) => [...prev, c]);
@@ -109,6 +183,15 @@ export default function Home() {
           showGrid={showGrid}
           onToggleGrid={() => setShowGrid((p) => !p)}
           presetRefreshKey={presetRefreshKey}
+          flights={flights}
+          flightsLoading={flightsLoading}
+          flightsError={flightsError}
+          flightsEnabled={flightsEnabled}
+          onToggleFlights={handleToggleFlights}
+          onRefreshFlights={fetchFlights}
+          onSelectFlight={handleSelectFlight}
+          selectedFlightIcao={selectedFlightIcao}
+          onVisibleFlightsChange={handleVisibleFlightsChange}
         />
         </div>
       </aside>
@@ -121,6 +204,8 @@ export default function Home() {
           rotationSpeed={rotationSpeed}
           focusTarget={focusTarget}
           showGrid={showGrid}
+          flights={globeFlights}
+          selectedFlightIcao={selectedFlightIcao}
         />
 
         {/* Mapbox street-level route overlay */}

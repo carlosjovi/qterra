@@ -43,3 +43,20 @@ export interface PlaceDetails {
   photoUrl?: string; // proxy URL via /api/places/photo
   mapsUrl?: string;
 }
+
+/** A single aircraft state vector from OpenSky Network */
+export interface Flight {
+  icao24: string;
+  callsign: string;
+  originCountry: string;
+  lat: number;
+  lng: number;
+  altitude: number; // barometric altitude in metres
+  velocity: number; // ground speed in m/s
+  heading: number; // true track in degrees clockwise from north
+  verticalRate: number; // m/s
+  onGround: boolean;
+  lastContact: number; // unix timestamp
+  squawk?: string; // transponder code
+  category?: number; // ADS-B emitter category (0–20)
+}

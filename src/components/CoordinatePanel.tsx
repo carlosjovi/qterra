@@ -27,7 +27,8 @@ import {
   GearIcon,
 } from "@radix-ui/react-icons";
 import * as SliderPrimitive from "@radix-ui/react-slider";
-import type { Coordinate } from "@/lib/types";
+import type { Coordinate, Flight } from "@/lib/types";
+import FlightsPanel from "@/components/FlightsPanel";
 
 type Tab = "places" | "flights" | "satellites" | "settings";
 
@@ -55,6 +56,15 @@ export default function CoordinatePanel({
   showGrid,
   onToggleGrid,
   presetRefreshKey = 0,
+  flights = [],
+  flightsLoading = false,
+  flightsError = null,
+  flightsEnabled = false,
+  onToggleFlights,
+  onRefreshFlights,
+  onSelectFlight,
+  selectedFlightIcao = null,
+  onVisibleFlightsChange,
 }: {
   coordinates: Coordinate[];
   onAdd: (c: Coordinate) => void;
@@ -70,6 +80,15 @@ export default function CoordinatePanel({
   showGrid: boolean;
   onToggleGrid: () => void;
   presetRefreshKey?: number;
+  flights?: Flight[];
+  flightsLoading?: boolean;
+  flightsError?: string | null;
+  flightsEnabled?: boolean;
+  onToggleFlights?: () => void;
+  onRefreshFlights?: () => void;
+  onSelectFlight?: (f: Flight | null) => void;
+  selectedFlightIcao?: string | null;
+  onVisibleFlightsChange?: (flights: Flight[], hasFilter: boolean) => void;
 }) {
   const [activeTab, setActiveTab] = useState<Tab>("places");
   const [searchQuery, setSearchQuery] = useState("");
@@ -409,13 +428,17 @@ export default function CoordinatePanel({
 
         {/* ──── FLIGHTS ──── */}
         {activeTab === "flights" && (
-          <Flex direction="column" align="center" justify="center" gap="3" p="6" style={{ minHeight: 300 }}>
-            <PaperPlaneIcon width="32" height="32" style={{ color: "var(--gray-8)" }} />
-            <Heading size="2" style={{ color: "var(--gray-11)" }}>Flight Tracker</Heading>
-            <Text size="1" color="gray" align="center">
-              Real-time flight tracking integration coming soon.
-            </Text>
-          </Flex>
+          <FlightsPanel
+            flights={flights}
+            loading={flightsLoading}
+            error={flightsError ?? null}
+            enabled={flightsEnabled}
+            onToggleEnabled={onToggleFlights ?? (() => {})}
+            onRefresh={onRefreshFlights ?? (() => {})}
+            onSelectFlight={onSelectFlight ?? (() => {})}
+            selectedFlightIcao={selectedFlightIcao ?? null}
+            onVisibleFlightsChange={onVisibleFlightsChange}
+          />
         )}
 
         {/* ──── SATELLITES ──── */}

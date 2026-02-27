@@ -17,6 +17,9 @@
 - **Auto-Rotation** — the globe auto-rotates on load; pause/resume with a button and adjust speed with a slider.
 - **Quick Presets** — built-in one-click pins for major world cities, plus any location you save from the Point Detail pane appears as a custom preset in the sidebar — no API call required to place it.
 - **Point Detail Pane** — click any pin to open a detail panel showing place name, address, phone, opening hours, website, a photo, a Street View embed, and a Google Maps link. Save a point to Quick Presets with one click.
+- **Live Flight Tracking** — toggle the Flight Tracker to stream real-time aircraft positions from the OpenSky Network. Filter by country or callsign, see altitude / speed / vertical rate at a glance, and click any flight to fly the camera to its location on the globe.
+- **Heading-Projected Arcs** — each airborne flight displays a dashed arc projected ~20 minutes ahead along its current heading and speed, giving a visual sense of direction and trajectory.
+- **Airline Identification** — flights are automatically tagged with their airline name (e.g. "United", "Lufthansa", "Emirates") by matching the ICAO 3-letter callsign prefix against a built-in lookup table.
 - **API Response Caching** — every Google Places lookup, photo, and geocoding result is cached in a local SQLite database. Repeat requests are served from the cache with zero external API calls (see [Local Database](#local-database)).
 - **Token Security** — API keys are never exposed in source code; Mapbox Directions requests are proxied through Next.js API routes so the secret key stays server-side.
 
@@ -42,6 +45,7 @@
 | Styling | [Tailwind CSS v4](https://tailwindcss.com) |
 | Geocoding | Google Maps Geocoding API (+ MapQuest fallback) |
 | Directions | Mapbox Directions API (server-side proxy) |
+| Flight Tracking | [OpenSky Network](https://opensky-network.org) REST API (server-side proxy, OAuth2) |
 | Local Database | [SQLite](https://sqlite.org) via [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) |
 
 ---
@@ -100,14 +104,17 @@ All keys live in `.env.local`, which is **never committed** (covered by `.gitign
 | `GOOGLE_MAPS_API_KEY` | Recommended | Server-side key for Geocoding API, Places Nearby Search, Place Details, and place photos. |
 | `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` | Recommended | Client-side key used to embed the Google Street View iframe in the Point Detail pane. Can be the same key as above (restrict by HTTP referrer). |
 | `MAPQUEST_API_KEY` | Optional | Fallback geocoder if Google is unavailable or not configured. |
+| `OPENSKY_CLIENT_ID` | Optional | OAuth2 client ID for authenticated OpenSky API access (higher rate limits). |
+| `OPENSKY_CLIENT_SECRET` | Optional | OAuth2 client secret for authenticated OpenSky API access. |
 
 ### Where to get each key
 
 - **Mapbox tokens** → [account.mapbox.com/access-tokens](https://account.mapbox.com/access-tokens/). Create a *public* token and a separate *secret* token (grant it `styles:read` and `directions:read` scopes).
 - **Google Maps API key** → [Google Cloud Console](https://console.cloud.google.com/). Enable the **Geocoding API**, **Places API**, and **Maps Embed API**, then create a restricted API key. Use the same key for both `GOOGLE_MAPS_API_KEY` and `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`, or create separate keys restricted by IP (server) and HTTP referrer (client) respectively.
 - **MapQuest API key** → [developer.mapquest.com](https://developer.mapquest.com/) — free tier available.
+- **OpenSky Network credentials** → [opensky-network.org](https://opensky-network.org/). Register for a free account, then create OAuth2 client credentials under your profile. Without credentials the API still works (anonymous access) but with stricter rate limits (≈ 100 requests/day vs. 4000 authenticated).
 
-> **Note:** The app works without Google/MapQuest keys (geocoding simply returns no results). The route overlay requires both Mapbox tokens.
+> **Note:** The app works without Google/MapQuest keys (geocoding simply returns no results). The route overlay requires both Mapbox tokens. The flight tracker works without OpenSky credentials (anonymous mode) but may hit rate limits with heavy use.
 
 ---
 
@@ -120,7 +127,8 @@ All keys live in `.env.local`, which is **never committed** (covered by `.gitign
 5. **View a route** — once two or more pins are added, select an *Origin* and *Destination* from the dropdowns in the sidebar, then click **Get Route**. A Mapbox street-level map appears as an overlay panel.
 6. **Switch transport mode** — use the mode buttons in the route overlay (car, car without traffic, walking, cycling) to re-fetch the route.
 7. **Close the route** — click the × button in the route panel to dismiss it.
-8. **Control the globe** — use the Pause / Rotate button and the Speed slider to control auto-rotation. Click and drag the globe to manually orbit.
+8. **Track live flights** — toggle the Flight Tracker switch in the sidebar. Aircraft positions are fetched from the OpenSky Network every 15 seconds. Use the country chips or the search box to filter flights, then click a flight to zoom the globe to its location. A projected trajectory arc shows the flight's estimated path over the next ~20 minutes.
+9. **Control the globe** — use the Pause / Rotate button and the Speed slider to control auto-rotation. Click and drag the globe to manually orbit.
 
 ---
 
@@ -137,12 +145,14 @@ src/
 │   └── api/
 │       ├── geocode/route.ts    # Server-side geocoding proxy
 │       ├── directions/route.ts # Server-side Mapbox Directions proxy
+│       ├── flights/route.ts    # OpenSky Network flight data proxy (OAuth2)
 │       └── places/
 │           ├── route.ts        # Google Nearby + Place Details proxy
 │           └── photo/route.ts  # Google Places photo proxy
 ├── components/
 │   ├── Globe.tsx               # Three.js / three-globe canvas component
-│   ├── CoordinatePanel.tsx     # Sidebar: search, pin list, route controls, presets
+│   ├── CoordinatePanel.tsx     # Sidebar: search, pin list, route controls, presets, flights
+│   ├── FlightsPanel.tsx        # Flight tracker: list, filters, airline badges
 │   ├── PointDetailPane.tsx     # Overlay pane: place info, Street View, save to presets
 │   └── MapboxRouteMap.tsx      # Mapbox GL overlay with route + congestion
 └── lib/

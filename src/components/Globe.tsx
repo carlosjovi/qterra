@@ -5,10 +5,52 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import ThreeGlobe from "three-globe";
 import * as THREE from "three";
-import type { Coordinate, GeoJSON } from "@/lib/types";
+import type { Coordinate, GeoJSON, Flight } from "@/lib/types";
 
 const GEOJSON_URL =
   "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_110m_admin_0_countries.geojson";
+
+// ---------- geo helpers ----------
+
+/** Convert lat/lng to ThreeGlobe's internal coordinate system at radius r */
+function latLngToVec3(lat: number, lng: number, r: number): THREE.Vector3 {
+  const phi = (90 - lat) * (Math.PI / 180);
+  const theta = (90 + lng) * (Math.PI / 180);
+  return new THREE.Vector3(
+    r * Math.sin(phi) * Math.cos(theta),
+    r * Math.cos(phi),
+    r * Math.sin(phi) * Math.sin(theta),
+  );
+}
+
+/**
+ * Project a point forward along a compass heading by `distKm` kilometres.
+ * Uses the standard spherical "destination point given distance and bearing" formula.
+ */
+function projectForward(
+  lat: number,
+  lng: number,
+  heading: number,
+  distKm: number,
+): { lat: number; lng: number } {
+  const R = 6371; // mean Earth radius km
+  const d = distKm / R;
+  const brng = (heading * Math.PI) / 180;
+  const lat1 = (lat * Math.PI) / 180;
+  const lng1 = (lng * Math.PI) / 180;
+
+  const lat2 = Math.asin(
+    Math.sin(lat1) * Math.cos(d) + Math.cos(lat1) * Math.sin(d) * Math.cos(brng),
+  );
+  const lng2 =
+    lng1 +
+    Math.atan2(
+      Math.sin(brng) * Math.sin(d) * Math.cos(lat1),
+      Math.cos(d) - Math.sin(lat1) * Math.sin(lat2),
+    );
+
+  return { lat: (lat2 * 180) / Math.PI, lng: (lng2 * 180) / Math.PI };
+}
 
 // ---------- inner scene component ----------
 function GlobeObject({
@@ -17,6 +59,8 @@ function GlobeObject({
   rotationSpeed,
   focusTarget,
   showGrid,
+  flights,
+  selectedFlightIcao,
   onGlobeReady,
 }: {
   coordinates: Coordinate[];
@@ -24,14 +68,29 @@ function GlobeObject({
   rotationSpeed: number;
   focusTarget: Coordinate | null;
   showGrid: boolean;
+  flights: Flight[];
+  selectedFlightIcao: string | null;
   onGlobeReady?: () => void;
 }) {
   const globeRef = useRef<ThreeGlobe | null>(null);
   const gridGroupRef = useRef<THREE.Group | null>(null);
+  const flightArcsGroupRef = useRef<THREE.Group | null>(null);
   const groupRef = useRef<THREE.Group>(null!);
   const controlsRef = useRef<any>(null);
   const { camera } = useThree();
   const [geoData, setGeoData] = useState<GeoJSON | null>(null);
+
+  // Stable-reference map: preserves data-object identity across refreshes so
+  // data-bind-mapper reuses existing Three.js meshes instead of recreating them.
+  const flightObjMapRef = useRef(new Map<string, Record<string, any>>());
+
+  // Animation state for the selected flight's smooth position interpolation.
+  const selAnimRef = useRef({
+    currentLat: 0, currentLng: 0, currentHeading: 0,
+    targetLat: 0, targetLng: 0, targetHeading: 0,
+    altitude: 0.05,
+    active: false,
+  });
 
   // fetch country polygons once
   useEffect(() => {
@@ -100,7 +159,28 @@ function GlobeObject({
       .arcDashLength(0.05)
       .arcDashGap(0.05)
       .arcDashAnimateTime(4500)
-      .arcStroke(0.5);
+      .arcStroke(0.5)
+      // ── flights: initial empty, updated separately ──
+      .objectsData([])
+      .objectThreeObject(() => {
+        // Base styling — selection highlight applied separately via material updates
+        const size = 0.9;
+        const geom = new THREE.ConeGeometry(size * 0.5, size, 4);
+        geom.rotateX(-Math.PI / 2);
+        const mat = new THREE.MeshBasicMaterial({
+          color: 0x60a5fa,
+          transparent: true,
+          opacity: 0.8,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        });
+        return new THREE.Mesh(geom, mat);
+      })
+      .objectRotation((d: unknown) => {
+        const f = d as Flight;
+        return { x: 0, y: -(f.heading ?? 0), z: 0 };
+      })
+      .objectFacesSurface(true);
 
     // -- vector-line style: override default globe material --
     const globeMaterial = globe.globeMaterial() as THREE.MeshPhongMaterial;
@@ -188,8 +268,169 @@ function GlobeObject({
     groupRef.current.add(gridGroup);
     gridGroupRef.current = gridGroup;
     gridGroup.visible = showGrid;
+
+    // Flight projected-arcs group (populated separately in the flight effect)
+    const arcsGroup = new THREE.Group();
+    groupRef.current.add(arcsGroup);
+    flightArcsGroupRef.current = arcsGroup;
+
+    // Reset flight refs when the globe is rebuilt
+    flightObjMapRef.current.clear();
+    selAnimRef.current.active = false;
+
     onGlobeReady?.();
   }, [geoData, coordinates, onGlobeReady]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Update flight positions using stable object references ──
+  // data-bind-mapper matches items by reference: mutating existing objects
+  // in-place lets three-globe reuse meshes instead of destroying & recreating.
+  useEffect(() => {
+    if (!globeRef.current) return;
+    const globe = globeRef.current;
+    const prevMap = flightObjMapRef.current;
+    const nextMap = new Map<string, Record<string, any>>();
+
+    const flightData = flights
+      .filter((f) => !f.onGround)
+      .map((f) => {
+        const alt = Math.max(0.01, Math.min((f.altitude || 0) / 100_000, 0.15));
+        let obj = prevMap.get(f.icao24);
+        if (obj) {
+          // Mutate in-place to preserve reference identity
+          obj.lat = f.lat;
+          obj.lng = f.lng;
+          obj.altitude = alt;
+          obj.heading = f.heading;
+          obj.callsign = f.callsign;
+          obj.velocity = f.velocity;
+          obj.verticalRate = f.verticalRate;
+          obj.originCountry = f.originCountry;
+          obj.onGround = f.onGround;
+          obj.icao24 = f.icao24;
+          obj.lastContact = f.lastContact;
+        } else {
+          obj = { ...f, altitude: alt };
+        }
+        nextMap.set(f.icao24, obj);
+        return obj;
+      });
+
+    flightObjMapRef.current = nextMap;
+
+    // Capture the selected flight's interpolated position *before* digest snaps it
+    const anim = selAnimRef.current;
+    const savedPos = anim.active
+      ? { lat: anim.currentLat, lng: anim.currentLng, heading: anim.currentHeading }
+      : null;
+
+    globe.objectsData(flightData);
+
+    // ── Smooth-animation book-keeping for the selected flight ──
+    if (selectedFlightIcao) {
+      const selData = nextMap.get(selectedFlightIcao);
+      if (selData) {
+        if (!anim.active) {
+          // First activation — snap to live position (no lerp)
+          anim.currentLat = selData.lat as number;
+          anim.currentLng = selData.lng as number;
+          anim.currentHeading = (selData.heading as number) ?? 0;
+        }
+        anim.targetLat = selData.lat as number;
+        anim.targetLng = selData.lng as number;
+        anim.targetHeading = (selData.heading as number) ?? 0;
+        anim.altitude = selData.altitude as number;
+        anim.active = true;
+
+        // Override the digest-snapped position back to the interpolated position
+        if (savedPos && (selData as any).__threeObjObject) {
+          const group = (selData as any).__threeObjObject as THREE.Group;
+          const pos = globe.getCoords(savedPos.lat, savedPos.lng, anim.altitude);
+          group.position.set(pos.x, pos.y, pos.z);
+          group.setRotationFromEuler(
+            new THREE.Euler(-savedPos.lat * Math.PI / 180, savedPos.lng * Math.PI / 180, 0, 'YXZ'),
+          );
+          const child = group.children[0];
+          if (child) {
+            child.setRotationFromEuler(
+              new THREE.Euler(0, -savedPos.heading * Math.PI / 180, 0),
+            );
+          }
+        }
+      }
+    } else {
+      anim.active = false;
+    }
+
+    // ── Apply selection highlight on meshes (color / scale) ──
+    for (const [icao, obj] of nextMap) {
+      const group = (obj as any).__threeObjObject as THREE.Group | undefined;
+      if (!group) continue;
+      const mesh = group.children[0] as THREE.Mesh | undefined;
+      if (!mesh?.material) continue;
+      const isSelected = icao === selectedFlightIcao;
+      const mat = mesh.material as THREE.MeshBasicMaterial;
+      mat.color.setHex(isSelected ? 0xffa500 : 0x60a5fa);
+      mat.opacity = isSelected ? 1.0 : 0.8;
+      mat.needsUpdate = true;
+      mesh.scale.setScalar(isSelected ? 2.0 / 0.9 : 1.0);
+    }
+  }, [flights, selectedFlightIcao]);
+
+  // ── Heading-projected arcs for visible flights ──
+  useEffect(() => {
+    const group = flightArcsGroupRef.current;
+    if (!group) return;
+
+    // Dispose previous arc geometry & material
+    while (group.children.length) {
+      const child = group.children[0] as THREE.Mesh;
+      child.geometry?.dispose();
+      if (Array.isArray(child.material)) {
+        child.material.forEach((m) => m.dispose());
+      } else {
+        (child.material as THREE.Material)?.dispose();
+      }
+      group.remove(child);
+    }
+
+    const ARC_R = 101.3; // slightly above globe surface (radius ≈ 100)
+    const SEGMENTS = 32;
+    const PROJECTION_SECONDS = 1200; // 20 minutes ahead
+    const MIN_VELOCITY = 30; // m/s — skip very slow or stationary aircraft
+    const MAX_DIST_KM = 2500;
+    const TUBE_RADIUS = 0.12; // visible tube thickness
+    const TUBE_SEGMENTS = 4; // low-poly tube cross-section (performance)
+
+    for (const f of flights) {
+      if (f.onGround || !f.velocity || f.velocity < MIN_VELOCITY) continue;
+
+      const distKm = Math.min((f.velocity * PROJECTION_SECONDS) / 1000, MAX_DIST_KM);
+      if (distKm < 10) continue;
+
+      const endPt = projectForward(f.lat, f.lng, f.heading, distKm);
+
+      // Build a great-circle arc via normalised-lerp (nlerp ≈ slerp for vis)
+      const startV = latLngToVec3(f.lat, f.lng, ARC_R);
+      const endV = latLngToVec3(endPt.lat, endPt.lng, ARC_R);
+      const points: THREE.Vector3[] = [];
+      for (let i = 0; i <= SEGMENTS; i++) {
+        const t = i / SEGMENTS;
+        points.push(startV.clone().lerp(endV, t).normalize().multiplyScalar(ARC_R));
+      }
+
+      const isSelected = f.icao24 === selectedFlightIcao;
+      const path = new THREE.CatmullRomCurve3(points);
+      const geom = new THREE.TubeGeometry(path, SEGMENTS, TUBE_RADIUS, TUBE_SEGMENTS, false);
+      const mat = new THREE.MeshBasicMaterial({
+        color: isSelected ? 0xffa500 : 0x60a5fa,
+        transparent: true,
+        opacity: isSelected ? 0.8 : 0.4,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      group.add(new THREE.Mesh(geom, mat));
+    }
+  }, [flights, selectedFlightIcao]);
 
   // Toggle grid visibility without rebuilding
   useEffect(() => {
@@ -198,10 +439,36 @@ function GlobeObject({
     }
   }, [showGrid]);
 
-  // auto-rotate
+  // auto-rotate + smooth flight animation
   useFrame(() => {
     if (autoRotate && groupRef.current) {
       groupRef.current.rotation.y += rotationSpeed * 0.001;
+    }
+
+    // Smoothly interpolate the selected flight toward its target position
+    if (selectedFlightIcao && selAnimRef.current.active && globeRef.current) {
+      const anim = selAnimRef.current;
+      const lerpFactor = 0.06;
+
+      anim.currentLat += (anim.targetLat - anim.currentLat) * lerpFactor;
+      anim.currentLng += (anim.targetLng - anim.currentLng) * lerpFactor;
+      anim.currentHeading += (anim.targetHeading - anim.currentHeading) * lerpFactor;
+
+      const selObj = flightObjMapRef.current.get(selectedFlightIcao);
+      const group = (selObj as any)?.__threeObjObject as THREE.Group | undefined;
+      if (group) {
+        const pos = globeRef.current.getCoords(anim.currentLat, anim.currentLng, anim.altitude);
+        group.position.set(pos.x, pos.y, pos.z);
+        group.setRotationFromEuler(
+          new THREE.Euler(-anim.currentLat * Math.PI / 180, anim.currentLng * Math.PI / 180, 0, 'YXZ'),
+        );
+        const child = group.children[0];
+        if (child) {
+          child.setRotationFromEuler(
+            new THREE.Euler(0, -anim.currentHeading * Math.PI / 180, 0),
+          );
+        }
+      }
     }
   });
 
@@ -216,8 +483,9 @@ function GlobeObject({
 
     // Use three-globe's own coordinate mapping to get the exact surface position,
     // then apply the group's current rotation so we account for any accumulated auto-spin.
-    // Use a wider radius for arc midpoints so the full arc is visible.
-    const CAMERA_RADIUS = focusTarget.id === "__arc_mid__" ? 240 : 175;
+    // Use a wider radius for arc midpoints so the full arc is visible, closer for flights.
+    const isFlight = focusTarget.id.startsWith("__flight_");
+    const CAMERA_RADIUS = focusTarget.id === "__arc_mid__" ? 240 : isFlight ? 155 : 175;
     const surfacePos = globeRef.current.getCoords(focusTarget.lat, focusTarget.lng, 0);
     const dir = new THREE.Vector3(surfacePos.x, surfacePos.y, surfacePos.z)
       .applyEuler(groupRef.current.rotation)
@@ -289,12 +557,16 @@ export default function Globe({
   rotationSpeed = 1,
   focusTarget = null,
   showGrid = true,
+  flights = [],
+  selectedFlightIcao = null,
 }: {
   coordinates?: Coordinate[];
   autoRotate?: boolean;
   rotationSpeed?: number;
   focusTarget?: Coordinate | null;
   showGrid?: boolean;
+  flights?: Flight[];
+  selectedFlightIcao?: string | null;
 }) {
   const [ready, setReady] = useState(false);
   const handleReady = useCallback(() => setReady(true), []);
@@ -320,6 +592,8 @@ export default function Globe({
           rotationSpeed={rotationSpeed}
           focusTarget={focusTarget}
           showGrid={showGrid}
+          flights={flights}
+          selectedFlightIcao={selectedFlightIcao}
           onGlobeReady={handleReady}
         />
       </Canvas>
