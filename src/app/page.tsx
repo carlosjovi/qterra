@@ -21,7 +21,7 @@ export default function Home() {
   const [autoRotate, setAutoRotate] = useState(true);
   const [rotationSpeed, setRotationSpeed] = useState(1);
   const [focusTarget, setFocusTarget] = useState<Coordinate | null>(null);
-  const [showGrid, setShowGrid] = useState(true);
+  const [showGrid, setShowGrid] = useState(false);
   const [selectedPoint, setSelectedPoint] = useState<Coordinate | null>(null);
   const [presetRefreshKey, setPresetRefreshKey] = useState(0);
 

@@ -63,6 +63,7 @@ function GlobeObject({
   selectedFlightIcao,
   flightRoute,
   onGlobeReady,
+  zoomTrigger,
 }: {
   coordinates: Coordinate[];
   autoRotate: boolean;
@@ -73,6 +74,7 @@ function GlobeObject({
   selectedFlightIcao: string | null;
   flightRoute: FlightRoute | null;
   onGlobeReady?: () => void;
+  zoomTrigger?: { id: number; factor: number } | null;
 }) {
   const globeRef = useRef<ThreeGlobe | null>(null);
   const gridGroupRef = useRef<THREE.Group | null>(null);
@@ -631,6 +633,15 @@ function GlobeObject({
     };
   }, [focusTarget, camera]);
 
+  // Programmatic zoom from +/- buttons
+  useEffect(() => {
+    if (!zoomTrigger) return;
+    const dist = camera.position.length();
+    const newDist = Math.min(Math.max(dist * zoomTrigger.factor, 120), 500);
+    camera.position.setLength(newDist);
+    if (controlsRef.current) controlsRef.current.update();
+  }, [zoomTrigger, camera]);
+
   return (
     <>
       <group ref={groupRef} />
@@ -686,6 +697,15 @@ export default function Globe({
   const [ready, setReady] = useState(false);
   const handleReady = useCallback(() => setReady(true), []);
 
+  const [zoomTrigger, setZoomTrigger] = useState<{ id: number; factor: number } | null>(null);
+  const zoomIdRef = useRef(0);
+  const handleZoomIn = useCallback(() => {
+    setZoomTrigger({ id: ++zoomIdRef.current, factor: 0.75 });
+  }, []);
+  const handleZoomOut = useCallback(() => {
+    setZoomTrigger({ id: ++zoomIdRef.current, factor: 1.33 });
+  }, []);
+
   return (
     <div className="relative h-full w-full">
       {!ready && (
@@ -695,6 +715,25 @@ export default function Globe({
           </p>
         </div>
       )}
+
+      {/* Zoom controls */}
+      <div className="absolute top-4 right-4 z-20 flex flex-col gap-1">
+        <button
+          onClick={handleZoomIn}
+          className="w-8 h-8 rounded bg-white/10 hover:bg-white/20 text-white text-lg font-light leading-none flex items-center justify-center backdrop-blur-sm border border-white/15 transition-colors"
+          aria-label="Zoom in"
+        >
+          +
+        </button>
+        <button
+          onClick={handleZoomOut}
+          className="w-8 h-8 rounded bg-white/10 hover:bg-white/20 text-white text-lg font-light leading-none flex items-center justify-center backdrop-blur-sm border border-white/15 transition-colors"
+          aria-label="Zoom out"
+        >
+          −
+        </button>
+      </div>
+
       <Canvas
         camera={{ position: [0, 0, 300], fov: 50, near: 1, far: 1000 }}
         gl={{ antialias: true, alpha: false }}
@@ -711,6 +750,7 @@ export default function Globe({
           selectedFlightIcao={selectedFlightIcao}
           flightRoute={flightRoute}
           onGlobeReady={handleReady}
+          zoomTrigger={zoomTrigger}
         />
       </Canvas>
     </div>

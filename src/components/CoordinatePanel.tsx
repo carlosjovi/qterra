@@ -515,7 +515,7 @@ export default function CoordinatePanel({
                     value={[rotationSpeed]}
                     onValueChange={([v]) => onSpeedChange(v)}
                   >
-                    <SliderPrimitive.Track className="relative h-[3px] grow rounded-full bg-[--gray-6]">
+                    <SliderPrimitive.Track className="relative h-[3px] grow rounded-full bg-white/20">
                       <SliderPrimitive.Range className="absolute h-full rounded-full bg-[--accent-9]" />
                     </SliderPrimitive.Track>
                     <SliderPrimitive.Thumb className="block h-3.5 w-3.5 rounded-full border border-[--accent-8] bg-[--gray-1] shadow focus:outline-none focus:ring-1 focus:ring-[--accent-8]" />
