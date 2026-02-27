@@ -60,3 +60,22 @@ export interface Flight {
   squawk?: string; // transponder code
   category?: number; // ADS-B emitter category (0–20)
 }
+
+/** Flight route info resolved via SerpAPI Google Flights search */
+export interface FlightRoute {
+  callsign: string; // e.g. "DAL1950"
+  airline?: string; // e.g. "Delta"
+  flightNumber?: string; // e.g. "DL 1950"
+  departureAirport: string; // IATA code, e.g. "STT"
+  departureCity?: string; // e.g. "Saint Thomas"
+  departureLat: number;
+  departureLng: number;
+  arrivalAirport: string; // IATA code, e.g. "JFK"
+  arrivalCity?: string; // e.g. "New York"
+  arrivalLat: number;
+  arrivalLng: number;
+  departureTime?: string; // local time string
+  arrivalTime?: string; // local time string
+  status?: string; // e.g. "On Time", "Delayed", "Landed"
+  cached?: boolean; // true if served from cache
+}

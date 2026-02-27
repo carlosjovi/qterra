@@ -5,7 +5,7 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import ThreeGlobe from "three-globe";
 import * as THREE from "three";
-import type { Coordinate, GeoJSON, Flight } from "@/lib/types";
+import type { Coordinate, GeoJSON, Flight, FlightRoute } from "@/lib/types";
 
 const GEOJSON_URL =
   "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_110m_admin_0_countries.geojson";
@@ -15,7 +15,7 @@ const GEOJSON_URL =
 /** Convert lat/lng to ThreeGlobe's internal coordinate system at radius r */
 function latLngToVec3(lat: number, lng: number, r: number): THREE.Vector3 {
   const phi = (90 - lat) * (Math.PI / 180);
-  const theta = (90 + lng) * (Math.PI / 180);
+  const theta = (90 - lng) * (Math.PI / 180);
   return new THREE.Vector3(
     r * Math.sin(phi) * Math.cos(theta),
     r * Math.cos(phi),
@@ -61,6 +61,7 @@ function GlobeObject({
   showGrid,
   flights,
   selectedFlightIcao,
+  flightRoute,
   onGlobeReady,
 }: {
   coordinates: Coordinate[];
@@ -70,11 +71,13 @@ function GlobeObject({
   showGrid: boolean;
   flights: Flight[];
   selectedFlightIcao: string | null;
+  flightRoute: FlightRoute | null;
   onGlobeReady?: () => void;
 }) {
   const globeRef = useRef<ThreeGlobe | null>(null);
   const gridGroupRef = useRef<THREE.Group | null>(null);
   const flightArcsGroupRef = useRef<THREE.Group | null>(null);
+  const routeArcGroupRef = useRef<THREE.Group | null>(null);
   const groupRef = useRef<THREE.Group>(null!);
   const controlsRef = useRef<any>(null);
   const { camera } = useThree();
@@ -92,6 +95,10 @@ function GlobeObject({
     active: false,
   });
 
+  // Counter bumped whenever the globe is (re-)built so that dependent effects
+  // (route arc, flight arcs) re-run even if their own data hasn't changed.
+  const [globeEpoch, setGlobeEpoch] = useState(0);
+
   // fetch country polygons once
   useEffect(() => {
     fetch(GEOJSON_URL)
@@ -105,10 +112,10 @@ function GlobeObject({
     if (!geoData) return;
 
     // -- helpers for ThreeGlobe's coordinate system --
-    // ThreeGlobe maps: phi = (90-lat)*PI/180, theta = (90+lng)*PI/180
+    // ThreeGlobe maps: phi = (90-lat)*PI/180, theta = (90-lng)*PI/180
     const toXYZ = (lat: number, lng: number, r: number): THREE.Vector3 => {
       const phi = (90 - lat) * (Math.PI / 180);
-      const theta = (90 + lng) * (Math.PI / 180);
+      const theta = (90 - lng) * (Math.PI / 180);
       return new THREE.Vector3(
         r * Math.sin(phi) * Math.cos(theta),
         r * Math.cos(phi),
@@ -274,9 +281,17 @@ function GlobeObject({
     groupRef.current.add(arcsGroup);
     flightArcsGroupRef.current = arcsGroup;
 
+    // Route arc group for origin→destination arcs (SerpAPI)
+    const routeGroup = new THREE.Group();
+    groupRef.current.add(routeGroup);
+    routeArcGroupRef.current = routeGroup;
+
     // Reset flight refs when the globe is rebuilt
     flightObjMapRef.current.clear();
     selAnimRef.current.active = false;
+
+    // Bump epoch so dependent effects (route arc, flight arcs) re-draw
+    setGlobeEpoch((e) => e + 1);
 
     onGlobeReady?.();
   }, [geoData, coordinates, onGlobeReady]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -404,6 +419,9 @@ function GlobeObject({
     for (const f of flights) {
       if (f.onGround || !f.velocity || f.velocity < MIN_VELOCITY) continue;
 
+      // Skip the projected arc for the selected flight when real route data exists
+      if (f.icao24 === selectedFlightIcao && flightRoute) continue;
+
       const distKm = Math.min((f.velocity * PROJECTION_SECONDS) / 1000, MAX_DIST_KM);
       if (distKm < 10) continue;
 
@@ -430,7 +448,102 @@ function GlobeObject({
       });
       group.add(new THREE.Mesh(geom, mat));
     }
-  }, [flights, selectedFlightIcao]);
+  }, [flights, selectedFlightIcao, flightRoute]);
+
+  // ── Render origin→destination route arc from SerpAPI flight lookup ──
+  useEffect(() => {
+    const group = routeArcGroupRef.current;
+    if (!group) return;
+
+    // Dispose previous route arc geometry & material
+    while (group.children.length) {
+      const child = group.children[0] as THREE.Mesh;
+      child.geometry?.dispose();
+      if (Array.isArray(child.material)) {
+        child.material.forEach((m) => m.dispose());
+      } else {
+        (child.material as THREE.Material)?.dispose();
+      }
+      group.remove(child);
+    }
+
+    if (!flightRoute) return;
+
+    // Validate all four coordinates — skip if any pair is (0,0) or non-finite
+    const { departureLat, departureLng, arrivalLat, arrivalLng } = flightRoute;
+    if (
+      (departureLat === 0 && departureLng === 0) ||
+      (arrivalLat === 0 && arrivalLng === 0) ||
+      !isFinite(departureLat) || !isFinite(departureLng) ||
+      !isFinite(arrivalLat) || !isFinite(arrivalLng)
+    ) return;
+
+    const ARC_R = 101.4;
+    const SEGMENTS = 64;
+    const TUBE_RADIUS = 0.25;
+    const TUBE_SEGMENTS = 8;
+
+    // Build a great-circle arc from departure to arrival
+    const startV = latLngToVec3(departureLat, departureLng, ARC_R);
+    const endV = latLngToVec3(arrivalLat, arrivalLng, ARC_R);
+
+    // Calculate arc height based on distance — longer routes get taller arcs
+    const dist = startV.distanceTo(endV);
+    const maxArcHeight = Math.min(dist * 0.15, 15); // cap at 15 units
+
+    const points: THREE.Vector3[] = [];
+    for (let i = 0; i <= SEGMENTS; i++) {
+      const t = i / SEGMENTS;
+      const p = startV.clone().lerp(endV, t).normalize();
+      // Add altitude bump in the middle of the arc (sin curve)
+      const altBump = Math.sin(t * Math.PI) * maxArcHeight;
+      p.multiplyScalar(ARC_R + altBump);
+      points.push(p);
+    }
+
+    // Main route arc — bright green
+    const path = new THREE.CatmullRomCurve3(points);
+    const geom = new THREE.TubeGeometry(path, SEGMENTS, TUBE_RADIUS, TUBE_SEGMENTS, false);
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0x22c55e, // green-500
+      transparent: true,
+      opacity: 0.85,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    group.add(new THREE.Mesh(geom, mat));
+
+    // Departure airport marker (sphere + ring)
+    const depGeom = new THREE.SphereGeometry(0.7, 16, 16);
+    const depMat = new THREE.MeshBasicMaterial({ color: 0x22c55e, transparent: true, opacity: 0.95 });
+    const depMesh = new THREE.Mesh(depGeom, depMat);
+    const depPos = latLngToVec3(departureLat, departureLng, ARC_R);
+    depMesh.position.copy(depPos);
+    group.add(depMesh);
+
+    // Departure ring (pulsing halo effect via larger translucent sphere)
+    const depRingGeom = new THREE.SphereGeometry(1.4, 16, 16);
+    const depRingMat = new THREE.MeshBasicMaterial({ color: 0x22c55e, transparent: true, opacity: 0.25 });
+    const depRingMesh = new THREE.Mesh(depRingGeom, depRingMat);
+    depRingMesh.position.copy(depPos);
+    group.add(depRingMesh);
+
+    // Arrival airport marker (sphere + ring)
+    const arrGeom = new THREE.SphereGeometry(0.7, 16, 16);
+    const arrMat = new THREE.MeshBasicMaterial({ color: 0xef4444, transparent: true, opacity: 0.95 });
+    const arrMesh = new THREE.Mesh(arrGeom, arrMat);
+    const arrPos = latLngToVec3(arrivalLat, arrivalLng, ARC_R);
+    arrMesh.position.copy(arrPos);
+    group.add(arrMesh);
+
+    // Arrival ring
+    const arrRingGeom = new THREE.SphereGeometry(1.4, 16, 16);
+    const arrRingMat = new THREE.MeshBasicMaterial({ color: 0xef4444, transparent: true, opacity: 0.25 });
+    const arrRingMesh = new THREE.Mesh(arrRingGeom, arrRingMat);
+    arrRingMesh.position.copy(arrPos);
+    group.add(arrRingMesh);
+
+  }, [flightRoute, globeEpoch]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Toggle grid visibility without rebuilding
   useEffect(() => {
@@ -559,6 +672,7 @@ export default function Globe({
   showGrid = true,
   flights = [],
   selectedFlightIcao = null,
+  flightRoute = null,
 }: {
   coordinates?: Coordinate[];
   autoRotate?: boolean;
@@ -567,6 +681,7 @@ export default function Globe({
   showGrid?: boolean;
   flights?: Flight[];
   selectedFlightIcao?: string | null;
+  flightRoute?: FlightRoute | null;
 }) {
   const [ready, setReady] = useState(false);
   const handleReady = useCallback(() => setReady(true), []);
@@ -594,6 +709,7 @@ export default function Globe({
           showGrid={showGrid}
           flights={flights}
           selectedFlightIcao={selectedFlightIcao}
+          flightRoute={flightRoute}
           onGlobeReady={handleReady}
         />
       </Canvas>

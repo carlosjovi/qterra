@@ -19,7 +19,9 @@
 - **Point Detail Pane** — click any pin to open a detail panel showing place name, address, phone, opening hours, website, a photo, a Street View embed, and a Google Maps link. Save a point to Quick Presets with one click.
 - **Live Flight Tracking** — toggle the Flight Tracker to stream real-time aircraft positions from the OpenSky Network. Filter by country or callsign, see altitude / speed / vertical rate at a glance, and click any flight to fly the camera to its location on the globe.
 - **Heading-Projected Arcs** — each airborne flight displays a dashed arc projected ~20 minutes ahead along its current heading and speed, giving a visual sense of direction and trajectory.
-- **Airline Identification** — flights are automatically tagged with their airline name (e.g. "United", "Lufthansa", "Emirates") by matching the ICAO 3-letter callsign prefix against a built-in lookup table.
+- **Flight Route Lookup** — select a commercial flight to automatically resolve its origin and destination airports using a multi-strategy pipeline (see [Flight Route Resolution](#flight-route-resolution) below). A raised green great-circle arc is drawn on the globe from departure to arrival, with colour-coded airport markers. A route info card in the sidebar shows airline, flight number, airports, cities, times, and flight status.
+- **Airport Database** — a bundled database of ~170 major airports worldwide (IATA code → lat/lng/city) powers the route arc rendering. Located at `public/data/airports.json`.
+- **Airline Identification** — flights are automatically tagged with their airline name (e.g. "United", "Lufthansa", "Emirates") via a comprehensive ICAO→IATA airline code mapping table that also provides readable airline names and IATA-format flight numbers.
 - **API Response Caching** — every Google Places lookup, photo, and geocoding result is cached in a local SQLite database. Repeat requests are served from the cache with zero external API calls (see [Local Database](#local-database)).
 - **Token Security** — API keys are never exposed in source code; Mapbox Directions requests are proxied through Next.js API routes so the secret key stays server-side.
 
@@ -27,9 +29,13 @@
 
 ## Screenshots
 
-![3D Globe with animated arc and Mapbox panel](public/screenshots/three-globe-arc-mapbox-panel.jpg)
+![Point detail panel with Google Places info and Street View embed](public/screenshots/1-point-panel-google-places-streetview.jpg)
 
-![Mapbox GL JS routing overlay with live traffic congestion](public/screenshots/mapbox-gl-js-routing.jpg)
+![3D globe with minimized sidebar and Mapbox route overlay](public/screenshots/2-3d-globe-minimized-mapbox-route.jpg)
+
+![Enlarged Mapbox route map with traffic congestion colouring](public/screenshots/3-enlarged-mapbox-route.jpg)
+
+![Flight tracker with live aircraft positions and route arcs](public/screenshots/4-flight-tracker-routes.jpg)
 
 ---
 
@@ -46,6 +52,8 @@
 | Geocoding | Google Maps Geocoding API (+ MapQuest fallback) |
 | Directions | Mapbox Directions API (server-side proxy) |
 | Flight Tracking | [OpenSky Network](https://opensky-network.org) REST API (server-side proxy, OAuth2) |
+| Flight Route Lookup | Multi-strategy: [SerpAPI](https://serpapi.com) Google Search → [FlightAware](https://www.flightaware.com) page parsing → organic result extraction (server-side, cached) |
+| Airport Database | Bundled JSON (~170 major airports, IATA → lat/lng) |
 | Local Database | [SQLite](https://sqlite.org) via [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) |
 
 ---
@@ -106,6 +114,7 @@ All keys live in `.env.local`, which is **never committed** (covered by `.gitign
 | `MAPQUEST_API_KEY` | Optional | Fallback geocoder if Google is unavailable or not configured. |
 | `OPENSKY_CLIENT_ID` | Optional | OAuth2 client ID for authenticated OpenSky API access (higher rate limits). |
 | `OPENSKY_CLIENT_SECRET` | Optional | OAuth2 client secret for authenticated OpenSky API access. |
+| `SERPAPI_API_KEY` | Optional | API key for SerpAPI — used to look up flight origin/destination airports via Google Search. |
 
 ### Where to get each key
 
@@ -113,8 +122,9 @@ All keys live in `.env.local`, which is **never committed** (covered by `.gitign
 - **Google Maps API key** → [Google Cloud Console](https://console.cloud.google.com/). Enable the **Geocoding API**, **Places API**, and **Maps Embed API**, then create a restricted API key. Use the same key for both `GOOGLE_MAPS_API_KEY` and `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`, or create separate keys restricted by IP (server) and HTTP referrer (client) respectively.
 - **MapQuest API key** → [developer.mapquest.com](https://developer.mapquest.com/) — free tier available.
 - **OpenSky Network credentials** → [opensky-network.org](https://opensky-network.org/). Register for a free account, then create OAuth2 client credentials under your profile. Without credentials the API still works (anonymous access) but with stricter rate limits (≈ 100 requests/day vs. 4000 authenticated).
+- **SerpAPI key** → [serpapi.com](https://serpapi.com/). Sign up and copy your API key from the dashboard. The free tier includes 100 searches/month. Flight route lookups are cached in-memory for 6 hours, so repeated selections of the same flight cost no additional searches.
 
-> **Note:** The app works without Google/MapQuest keys (geocoding simply returns no results). The route overlay requires both Mapbox tokens. The flight tracker works without OpenSky credentials (anonymous mode) but may hit rate limits with heavy use.
+> **Note:** The app works without Google/MapQuest keys (geocoding simply returns no results). The route overlay requires both Mapbox tokens. The flight tracker works without OpenSky credentials (anonymous mode) but may hit rate limits with heavy use. Without a SerpAPI key, flight route lookup still works via the FlightAware fallback strategy — SerpAPI simply provides an additional (often richer) data source.
 
 ---
 
@@ -128,7 +138,8 @@ All keys live in `.env.local`, which is **never committed** (covered by `.gitign
 6. **Switch transport mode** — use the mode buttons in the route overlay (car, car without traffic, walking, cycling) to re-fetch the route.
 7. **Close the route** — click the × button in the route panel to dismiss it.
 8. **Track live flights** — toggle the Flight Tracker switch in the sidebar. Aircraft positions are fetched from the OpenSky Network every 15 seconds. Use the country chips or the search box to filter flights, then click a flight to zoom the globe to its location. A projected trajectory arc shows the flight's estimated path over the next ~20 minutes.
-9. **Control the globe** — use the Pause / Rotate button and the Speed slider to control auto-rotation. Click and drag the globe to manually orbit.
+9. **View flight route** — when you select a commercial flight (e.g. DAL1950, AAL1600, UA2005), the app automatically resolves its origin and destination airports using a multi-strategy pipeline: SerpAPI structured data → organic search result parsing → FlightAware page fetch. A green great-circle arc is drawn on the globe from departure to arrival, green and red markers indicate the airports, and a route info card appears in the sidebar showing airline, flight number, status, airport codes, cities, and times. Results are cached for 6 hours. ICAO callsigns are automatically converted to IATA format for display (e.g. DAL1950 → DL 1950).
+10. **Control the globe** — use the Pause / Rotate button and the Speed slider to control auto-rotation. Click and drag the globe to manually orbit.
 
 ---
 
@@ -146,18 +157,22 @@ src/
 │       ├── geocode/route.ts    # Server-side geocoding proxy
 │       ├── directions/route.ts # Server-side Mapbox Directions proxy
 │       ├── flights/route.ts    # OpenSky Network flight data proxy (OAuth2)
+│       ├── flights/route/route.ts # Multi-strategy flight route resolver (cached)
 │       └── places/
 │           ├── route.ts        # Google Nearby + Place Details proxy
 │           └── photo/route.ts  # Google Places photo proxy
 ├── components/
 │   ├── Globe.tsx               # Three.js / three-globe canvas component
 │   ├── CoordinatePanel.tsx     # Sidebar: search, pin list, route controls, presets, flights
-│   ├── FlightsPanel.tsx        # Flight tracker: list, filters, airline badges
+│   ├── FlightsPanel.tsx        # Flight tracker: list, filters, airline badges, route info card
 │   ├── PointDetailPane.tsx     # Overlay pane: place info, Street View, save to presets
 │   └── MapboxRouteMap.tsx      # Mapbox GL overlay with route + congestion
 └── lib/
     ├── db.ts                   # SQLite database layer (caching + persistence)
     └── types.ts                # Shared TypeScript interfaces
+public/
+└── data/
+    └── airports.json           # Static airport database (~170 major airports, IATA → lat/lng)
 ```
 
 ---
@@ -191,6 +206,42 @@ Qterra automatically caches every external API response in a local SQLite databa
 - To clear the cache and force fresh API calls, simply delete `data/qterra.db` — it will be recreated on the next request.
 
 See [data/README.md](data/README.md) for the full schema reference and SQLite inspection tips.
+
+---
+
+## Flight Route Resolution
+
+When a commercial flight is selected, the API endpoint `GET /api/flights/route?callsign=DAL1950` resolves the origin and destination airports using a multi-strategy pipeline. Each strategy is tried in order; the first one to return two valid IATA airport codes wins.
+
+### Strategy 1: SerpAPI Structured Data
+
+Searches Google via SerpAPI using an IATA-format query (e.g. `"DL 1950 flight status"`) and checks for structured flight data in the response — `flights_results`, `knowledge_graph`, or `answer_box`. This yields the richest data (airline, times, status) when Google shows its flight tracker widget.
+
+### Strategy 2: SerpAPI Organic Result Parsing
+
+If no structured widget data is present, the pipeline scans the top 8 organic search results for airport code patterns:
+- Arrow patterns in titles/snippets: `JFK → LAX`, `JFK - LAX`, `JFK to LAX`
+- ICAO 4-letter codes: `KJFK / KLAX`
+- FlightAware history URLs: `/live/flight/DAL1950/history/.../KJFK/KLAX`
+- Any two recognised IATA codes appearing in the same result
+
+All extracted codes are validated against the bundled airport database before being accepted.
+
+### Strategy 3: FlightAware Page Fetch
+
+As a final fallback (also used when no SerpAPI key is configured), the pipeline fetches the FlightAware flight page directly (`https://www.flightaware.com/live/flight/DAL1950`) and parses the HTML for airport codes via:
+- Page `<title>` tag (e.g. `"DAL1950 (KJFK – KLAX) — FlightAware"`)
+- Embedded JSON-LD or `data-origin`/`data-destination` attributes
+- IATA code extraction from structured data blobs
+- Broad sweep of ICAO 4-letter codes (`K` + 3-letter IATA)
+
+### ICAO ↔ IATA Mapping
+
+SerpAPI and FlightAware use ICAO callsigns (e.g. `DAL1950`), but the UI displays IATA format (e.g. `DL 1950`). A comprehensive built-in mapping table converts between ~50 major airlines' ICAO codes, IATA codes, and readable names.
+
+### Caching
+
+Successful route lookups are cached in-memory for 6 hours. Repeat selections of the same flight within that window require zero external API calls.
 
 ---
 

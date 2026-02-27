@@ -13,6 +13,7 @@ import {
   TextField,
   Switch,
   Separator,
+  Select,
 } from "@radix-ui/themes";
 import {
   MagnifyingGlassIcon,
@@ -22,7 +23,7 @@ import {
   TriangleDownIcon,
   PaperPlaneIcon,
 } from "@radix-ui/react-icons";
-import type { Flight } from "@/lib/types";
+import type { Flight, FlightRoute } from "@/lib/types";
 
 /* ── helpers ── */
 
@@ -129,6 +130,9 @@ export default function FlightsPanel({
   onSelectFlight,
   selectedFlightIcao,
   onVisibleFlightsChange,
+  flightRoute = null,
+  flightRouteLoading = false,
+  flightRouteError = null,
 }: {
   flights: Flight[];
   loading: boolean;
@@ -139,9 +143,14 @@ export default function FlightsPanel({
   onSelectFlight: (f: Flight | null) => void;
   selectedFlightIcao: string | null;
   onVisibleFlightsChange?: (flights: Flight[], hasFilter: boolean) => void;
+  flightRoute?: FlightRoute | null;
+  flightRouteLoading?: boolean;
+  flightRouteError?: string | null;
 }) {
   const [filter, setFilter] = useState("");
   const [countryFilter, setCountryFilter] = useState<string | null>(null);
+  const [altitudeSort, setAltitudeSort] = useState<"none" | "asc" | "desc">("none");
+  const [speedSort, setSpeedSort] = useState<"none" | "asc" | "desc">("none");
 
   // Build sorted country list from live data, pinned countries first
   const countryCounts = useMemo(() => {
@@ -191,10 +200,18 @@ export default function FlightsPanel({
     onVisibleFlightsChange?.(visible, hasFilter);
   }, [visible, hasFilter, onVisibleFlightsChange]);
 
-  // Sort: selected first, then by callsign
+  // Sort: selected first, then by active sort, then by callsign
   const sorted = [...visible].sort((a, b) => {
     if (a.icao24 === selectedFlightIcao) return -1;
     if (b.icao24 === selectedFlightIcao) return 1;
+    if (altitudeSort !== "none") {
+      const diff = a.altitude - b.altitude;
+      if (diff !== 0) return altitudeSort === "asc" ? diff : -diff;
+    }
+    if (speedSort !== "none") {
+      const diff = a.velocity - b.velocity;
+      if (diff !== 0) return speedSort === "asc" ? diff : -diff;
+    }
     return a.callsign.localeCompare(b.callsign);
   });
 
@@ -254,6 +271,92 @@ export default function FlightsPanel({
             </Tooltip>
           </Flex>
 
+          {/* Flight route info card — shown when a flight is selected */}
+          {selectedFlightIcao && (flightRoute || flightRouteLoading || flightRouteError) && (
+            <Box style={{
+              background: "var(--gray-a3)",
+              border: flightRoute ? "1px solid var(--green-7)" : "1px solid var(--gray-a5)",
+              borderRadius: 8,
+              padding: "8px 10px",
+            }}>
+              {flightRouteLoading && (
+                <Flex align="center" gap="2">
+                  <ReloadIcon className="animate-spin" style={{ color: "var(--gray-9)" }} />
+                  <Text size="1" color="gray">Looking up route…</Text>
+                </Flex>
+              )}
+              {flightRouteError && !flightRouteLoading && (
+                <Text size="1" color="gray">{flightRouteError}</Text>
+              )}
+              {flightRoute && !flightRouteLoading && (
+                <Flex direction="column" gap="1">
+                  <Flex align="center" gap="2">
+                    {flightRoute.airline && (
+                      <Text size="1" weight="bold" style={{ color: "var(--green-11)" }}>
+                        {flightRoute.airline}
+                      </Text>
+                    )}
+                    {flightRoute.flightNumber && (
+                      <Badge size="1" variant="soft" color="green">{flightRoute.flightNumber}</Badge>
+                    )}
+                    {flightRoute.status && (
+                      <Badge size="1" variant="soft" color={
+                        flightRoute.status.toLowerCase().includes("on time") ? "green"
+                        : flightRoute.status.toLowerCase().includes("delay") ? "red"
+                        : flightRoute.status.toLowerCase().includes("land") ? "blue"
+                        : "gray"
+                      }>
+                        {flightRoute.status}
+                      </Badge>
+                    )}
+                    {flightRoute.cached && (
+                      <Badge size="1" variant="outline" color="gray" style={{ fontSize: 9 }}>cached</Badge>
+                    )}
+                  </Flex>
+                  <Flex align="center" gap="2" mt="1">
+                    <Flex direction="column" align="center" style={{ minWidth: 50 }}>
+                      <Text size="2" weight="bold" style={{ color: "var(--green-11)", letterSpacing: "0.05em" }}>
+                        {flightRoute.departureAirport}
+                      </Text>
+                      <Text size="1" color="gray" style={{ fontSize: 10 }}>
+                        {flightRoute.departureCity ?? ""}
+                      </Text>
+                      {flightRoute.departureTime && (
+                        <Text size="1" color="gray" style={{ fontSize: 9 }}>{flightRoute.departureTime}</Text>
+                      )}
+                    </Flex>
+                    <Flex align="center" style={{ flex: 1, justifyContent: "center" }}>
+                      <div style={{
+                        height: 1,
+                        flex: 1,
+                        background: "var(--green-7)",
+                        marginRight: 4,
+                      }} />
+                      <Text size="1" style={{ color: "var(--green-9)" }}>✈</Text>
+                      <div style={{
+                        height: 1,
+                        flex: 1,
+                        background: "var(--green-7)",
+                        marginLeft: 4,
+                      }} />
+                    </Flex>
+                    <Flex direction="column" align="center" style={{ minWidth: 50 }}>
+                      <Text size="2" weight="bold" style={{ color: "var(--red-11)", letterSpacing: "0.05em" }}>
+                        {flightRoute.arrivalAirport}
+                      </Text>
+                      <Text size="1" color="gray" style={{ fontSize: 10 }}>
+                        {flightRoute.arrivalCity ?? ""}
+                      </Text>
+                      {flightRoute.arrivalTime && (
+                        <Text size="1" color="gray" style={{ fontSize: 9 }}>{flightRoute.arrivalTime}</Text>
+                      )}
+                    </Flex>
+                  </Flex>
+                </Flex>
+              )}
+            </Box>
+          )}
+
           {/* Filter */}
           <TextField.Root
             size="1"
@@ -273,54 +376,66 @@ export default function FlightsPanel({
             )}
           </TextField.Root>
 
-          {/* Country quick-filter chips */}
-          {countryChips.length > 0 && (
-            <Box>
-              <Flex align="center" justify="between" mb="1">
-                <Text size="1" color="gray" style={{ letterSpacing: "0.05em", textTransform: "uppercase", fontSize: 10 }}>
-                  Filter by country
-                </Text>
-                {countryFilter && (
-                  <button
-                    onClick={() => setCountryFilter(null)}
-                    style={{ background: "none", border: "none", cursor: "pointer", color: "var(--amber-9)", fontSize: 10, textDecoration: "underline" }}
-                  >
-                    Clear
-                  </button>
-                )}
-              </Flex>
-              <ScrollArea scrollbars="vertical" style={{ maxHeight: 110 }}>
-                <Flex wrap="wrap" gap="1">
-                  {countryChips.map((c) => {
-                    const isActive = countryFilter === c.name;
-                    return (
-                      <button
-                        key={c.name}
-                        onClick={() => setCountryFilter(isActive ? null : c.name)}
-                        style={{
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: 4,
-                          padding: "2px 7px",
-                          fontSize: 11,
-                          borderRadius: 999,
-                          border: isActive ? "1px solid var(--amber-8)" : "1px solid var(--gray-a5)",
-                          background: isActive ? "var(--amber-a4)" : "transparent",
-                          color: isActive ? "var(--amber-11)" : "var(--gray-11)",
-                          cursor: "pointer",
-                          whiteSpace: "nowrap",
-                          transition: "all 0.15s",
-                        }}
-                      >
-                        {c.name}
-                        <span style={{ fontSize: 9, opacity: 0.7 }}>{c.count.toLocaleString()}</span>
-                      </button>
-                    );
-                  })}
-                </Flex>
-              </ScrollArea>
-            </Box>
-          )}
+          {/* Sort & Filter controls — single row */}
+          <Flex align="center" gap="2" wrap="wrap">
+            {/* Country dropdown */}
+            <Select.Root
+              size="1"
+              value={countryFilter ?? "__all__"}
+              onValueChange={(v) => setCountryFilter(v === "__all__" ? null : v)}
+            >
+              <Select.Trigger
+                variant="surface"
+                style={{ minWidth: 130, fontSize: 11 }}
+                placeholder="Country"
+              />
+              <Select.Content position="popper" sideOffset={4}>
+                <Select.Item value="__all__">All countries</Select.Item>
+                <Select.Separator />
+                {countryChips.map((c) => (
+                  <Select.Item key={c.name} value={c.name}>
+                    {c.name} ({c.count})
+                  </Select.Item>
+                ))}
+              </Select.Content>
+            </Select.Root>
+
+            {/* Altitude sort */}
+            <Select.Root
+              size="1"
+              value={altitudeSort}
+              onValueChange={(v) => setAltitudeSort(v as "none" | "asc" | "desc")}
+            >
+              <Select.Trigger
+                variant="surface"
+                style={{ minWidth: 110, fontSize: 11 }}
+                placeholder="Altitude"
+              />
+              <Select.Content position="popper" sideOffset={4}>
+                <Select.Item value="none">Altitude</Select.Item>
+                <Select.Item value="asc">Altitude ↑</Select.Item>
+                <Select.Item value="desc">Altitude ↓</Select.Item>
+              </Select.Content>
+            </Select.Root>
+
+            {/* Speed sort */}
+            <Select.Root
+              size="1"
+              value={speedSort}
+              onValueChange={(v) => setSpeedSort(v as "none" | "asc" | "desc")}
+            >
+              <Select.Trigger
+                variant="surface"
+                style={{ minWidth: 100, fontSize: 11 }}
+                placeholder="Speed"
+              />
+              <Select.Content position="popper" sideOffset={4}>
+                <Select.Item value="none">Speed</Select.Item>
+                <Select.Item value="asc">Speed ↑</Select.Item>
+                <Select.Item value="desc">Speed ↓</Select.Item>
+              </Select.Content>
+            </Select.Root>
+          </Flex>
 
           <Separator size="4" />
 
@@ -389,6 +504,12 @@ export default function FlightsPanel({
                           {verticalIcon(f.verticalRate)}
                         </Text>
                       </Flex>
+                      {/* No route data indicator */}
+                      {isSelected && !flightRouteLoading && !flightRoute && !flightRouteError && (
+                        <Text size="1" color="gray" style={{ fontSize: 10, fontStyle: "italic", marginTop: 2 }}>
+                          No route data available
+                        </Text>
+                      )}
                     </Flex>
                   </button>
                 );

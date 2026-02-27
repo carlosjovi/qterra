@@ -27,7 +27,7 @@ import {
   GearIcon,
 } from "@radix-ui/react-icons";
 import * as SliderPrimitive from "@radix-ui/react-slider";
-import type { Coordinate, Flight } from "@/lib/types";
+import type { Coordinate, Flight, FlightRoute } from "@/lib/types";
 import FlightsPanel from "@/components/FlightsPanel";
 
 type Tab = "places" | "flights" | "satellites" | "settings";
@@ -65,6 +65,9 @@ export default function CoordinatePanel({
   onSelectFlight,
   selectedFlightIcao = null,
   onVisibleFlightsChange,
+  flightRoute = null,
+  flightRouteLoading = false,
+  flightRouteError = null,
 }: {
   coordinates: Coordinate[];
   onAdd: (c: Coordinate) => void;
@@ -89,6 +92,9 @@ export default function CoordinatePanel({
   onSelectFlight?: (f: Flight | null) => void;
   selectedFlightIcao?: string | null;
   onVisibleFlightsChange?: (flights: Flight[], hasFilter: boolean) => void;
+  flightRoute?: FlightRoute | null;
+  flightRouteLoading?: boolean;
+  flightRouteError?: string | null;
 }) {
   const [activeTab, setActiveTab] = useState<Tab>("places");
   const [searchQuery, setSearchQuery] = useState("");
@@ -438,6 +444,9 @@ export default function CoordinatePanel({
             onSelectFlight={onSelectFlight ?? (() => {})}
             selectedFlightIcao={selectedFlightIcao ?? null}
             onVisibleFlightsChange={onVisibleFlightsChange}
+            flightRoute={flightRoute}
+            flightRouteLoading={flightRouteLoading}
+            flightRouteError={flightRouteError}
           />
         )}
 

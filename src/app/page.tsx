@@ -5,7 +5,7 @@ import dynamic from "next/dynamic";
 import { Box, Flex, Heading, Text, Separator } from "@radix-ui/themes";
 import CoordinatePanel from "@/components/CoordinatePanel";
 import PointDetailPane from "@/components/PointDetailPane";
-import type { Coordinate, Flight } from "@/lib/types";
+import type { Coordinate, Flight, FlightRoute } from "@/lib/types";
 
 // three-globe / R3F can't SSR – dynamic import with ssr: false
 const Globe = dynamic(() => import("@/components/Globe"), { ssr: false });
@@ -37,7 +37,11 @@ export default function Home() {
   const [flightsError, setFlightsError] = useState<string | null>(null);
   const [selectedFlightIcao, setSelectedFlightIcao] = useState<string | null>(null);
   const [globeFlights, setGlobeFlights] = useState<Flight[]>([]);
+  const [flightRoute, setFlightRoute] = useState<FlightRoute | null>(null);
+  const [flightRouteLoading, setFlightRouteLoading] = useState(false);
+  const [flightRouteError, setFlightRouteError] = useState<string | null>(null);
   const flightTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const routeFetchRef = useRef<AbortController | null>(null);
 
   const fetchFlights = useCallback(async () => {
     setFlightsLoading(true);
@@ -65,6 +69,10 @@ export default function Home() {
     } else {
       setFlights([]);
       setSelectedFlightIcao(null);
+      setFlightRoute(null);
+      setFlightRouteError(null);
+      setFlightRouteLoading(false);
+      routeFetchRef.current?.abort();
       if (flightTimerRef.current) clearInterval(flightTimerRef.current);
     }
     return () => {
@@ -91,6 +99,47 @@ export default function Home() {
     });
   }, [selectedFlightIcao]);
 
+  // Fetch flight route from SerpAPI when a flight is selected
+  const fetchFlightRoute = useCallback(async (callsign: string) => {
+    // Abort any in-flight request
+    routeFetchRef.current?.abort();
+    const controller = new AbortController();
+    routeFetchRef.current = controller;
+
+    setFlightRouteLoading(true);
+    setFlightRouteError(null);
+    setFlightRoute(null);
+
+    try {
+      const res = await fetch(`/api/flights/route?callsign=${encodeURIComponent(callsign)}`, {
+        signal: controller.signal,
+      });
+      const data = await res.json();
+      if (res.ok && data.route) {
+        setFlightRoute(data.route);
+        // Zoom out to show the full route arc if coordinates are valid
+        const r = data.route as FlightRoute;
+        if (
+          r.departureLat && r.arrivalLat &&
+          !(r.departureLat === 0 && r.departureLng === 0) &&
+          !(r.arrivalLat === 0 && r.arrivalLng === 0)
+        ) {
+          const midLat = (r.departureLat + r.arrivalLat) / 2;
+          const midLng = (r.departureLng + r.arrivalLng) / 2;
+          setFocusTarget({ id: "__arc_mid__", lat: midLat, lng: midLng, label: "" });
+        }
+      } else {
+        setFlightRouteError(data.error ?? "Route not found");
+      }
+    } catch (err: unknown) {
+      if ((err as Error).name !== "AbortError") {
+        setFlightRouteError("Failed to look up flight route");
+      }
+    } finally {
+      setFlightRouteLoading(false);
+    }
+  }, []);
+
   const handleSelectFlight = useCallback((f: Flight | null) => {
     setSelectedFlightIcao(f?.icao24 ?? null);
     if (f) {
@@ -101,8 +150,22 @@ export default function Home() {
         const without = prev.filter((p) => p.icao24 !== f.icao24);
         return [...without, f];
       });
+      // Look up route info if the callsign looks like a flight
+      // Matches AAL1234, DL1234, B61234, N12345 etc. – 2-3 letter prefix + digits
+      if (f.callsign && /^[A-Z]{2,3}\d+/i.test(f.callsign.trim())) {
+        fetchFlightRoute(f.callsign.trim());
+      } else {
+        setFlightRoute(null);
+        setFlightRouteError(null);
+      }
+    } else {
+      // Deselected — clear route
+      routeFetchRef.current?.abort();
+      setFlightRoute(null);
+      setFlightRouteError(null);
+      setFlightRouteLoading(false);
     }
-  }, []);
+  }, [fetchFlightRoute]);
 
   const handleAdd = useCallback((c: Coordinate) => {
     setCoordinates((prev) => [...prev, c]);
@@ -192,6 +255,9 @@ export default function Home() {
           onSelectFlight={handleSelectFlight}
           selectedFlightIcao={selectedFlightIcao}
           onVisibleFlightsChange={handleVisibleFlightsChange}
+          flightRoute={flightRoute}
+          flightRouteLoading={flightRouteLoading}
+          flightRouteError={flightRouteError}
         />
         </div>
       </aside>
@@ -206,6 +272,7 @@ export default function Home() {
           showGrid={showGrid}
           flights={globeFlights}
           selectedFlightIcao={selectedFlightIcao}
+          flightRoute={flightRoute}
         />
 
         {/* Mapbox street-level route overlay */}
