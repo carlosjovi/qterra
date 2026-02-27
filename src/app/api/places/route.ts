@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { savePlaceResult } from "@/lib/db";
+import { savePlaceResult, findPlaceByCoords } from "@/lib/db";
 
 const GOOGLE_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
 
@@ -22,6 +22,24 @@ export async function GET(req: NextRequest) {
   }
 
   try {
+    // ── Cache check: return DB result if available ────────────────────
+    const cached = findPlaceByCoords(parseFloat(lat), parseFloat(lng));
+    if (cached) {
+      const photoUrl = cached.photo_ref
+        ? `/api/places/photo?ref=${encodeURIComponent(cached.photo_ref)}`
+        : undefined;
+      return NextResponse.json({
+        name: cached.name,
+        address: cached.address,
+        phone: cached.phone,
+        website: cached.website,
+        mapsUrl: cached.maps_url,
+        hours: cached.hours ? (JSON.parse(cached.hours) as string[]) : [],
+        isOpen: cached.is_open != null ? !!cached.is_open : undefined,
+        photoUrl,
+      });
+    }
+
     // ── Step 1: Nearby Search to find the closest place ──────────────
     const nearbyUrl = new URL(
       "https://maps.googleapis.com/maps/api/place/nearbysearch/json"

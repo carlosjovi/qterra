@@ -23,6 +23,7 @@ export default function Home() {
   const [focusTarget, setFocusTarget] = useState<Coordinate | null>(null);
   const [showGrid, setShowGrid] = useState(true);
   const [selectedPoint, setSelectedPoint] = useState<Coordinate | null>(null);
+  const [presetRefreshKey, setPresetRefreshKey] = useState(0);
 
   // Routing state
   const [routeOrigin, setRouteOrigin] = useState<Coordinate | null>(null);
@@ -106,23 +107,12 @@ export default function Home() {
           routeActive={showRouteMap}
           showGrid={showGrid}
           onToggleGrid={() => setShowGrid((p) => !p)}
+          presetRefreshKey={presetRefreshKey}
         />
       </aside>
 
-      {/* point detail pane */}
-      {selectedPoint && (
-        <PointDetailPane
-          key={selectedPoint.id}
-          coordinate={selectedPoint}
-          onClose={() => setSelectedPoint(null)}
-          onFocus={handleFocus}
-          onRename={handleRename}
-          googleMapsApiKey={GOOGLE_MAPS_API_KEY || undefined}
-        />
-      )}
-
       {/* globe viewport */}
-      <div className="flex-1 relative">
+      <div className="flex-1 relative overflow-hidden">
         <Globe
           coordinates={coordinates}
           autoRotate={autoRotate}
@@ -140,6 +130,21 @@ export default function Home() {
             mapboxToken={MAPBOX_TOKEN}
             onClose={handleCloseRoute}
           />
+        )}
+
+        {/* point detail pane — overlaid so it doesn't shift the globe container */}
+        {selectedPoint && (
+          <div className="absolute left-0 top-0 bottom-0 z-[10000]">
+            <PointDetailPane
+              key={selectedPoint.id}
+              coordinate={selectedPoint}
+              onClose={() => setSelectedPoint(null)}
+              onFocus={handleFocus}
+              onRename={handleRename}
+              googleMapsApiKey={GOOGLE_MAPS_API_KEY || undefined}
+              onSaved={() => setPresetRefreshKey((k) => k + 1)}
+            />
+          </div>
         )}
       </div>
     </main>

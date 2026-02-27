@@ -15,6 +15,9 @@
 - **Transport Modes** — switch between driving (with traffic), driving (without traffic), walking, and cycling.
 - **Route Stats** — displays total distance (km / mi) and estimated travel time.
 - **Auto-Rotation** — the globe auto-rotates on load; pause/resume with a button and adjust speed with a slider.
+- **Quick Presets** — built-in one-click pins for major world cities, plus any location you save from the Point Detail pane appears as a custom preset in the sidebar — no API call required to place it.
+- **Point Detail Pane** — click any pin to open a detail panel showing place name, address, phone, opening hours, website, a photo, a Street View embed, and a Google Maps link. Save a point to Quick Presets with one click.
+- **API Response Caching** — every Google Places lookup, photo, and geocoding result is cached in a local SQLite database. Repeat requests are served from the cache with zero external API calls (see [Local Database](#local-database)).
 - **Token Security** — API keys are never exposed in source code; Mapbox Directions requests are proxied through Next.js API routes so the secret key stays server-side.
 
 ---
@@ -94,13 +97,14 @@ All keys live in `.env.local`, which is **never committed** (covered by `.gitign
 |---|---|---|
 | `NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN` | **Yes** | Public Mapbox token (`pk.*`) — rendered in the client bundle for the map overlay. |
 | `MAPBOX_ACCESS_TOKEN` | **Yes** | Secret Mapbox token (`sk.*`) — used server-side only for the Directions API proxy. |
-| `GOOGLE_MAPS_API_KEY` | Recommended | Primary geocoder. Enables accurate search for addresses, cities, and landmarks. |
+| `GOOGLE_MAPS_API_KEY` | Recommended | Server-side key for Geocoding API, Places Nearby Search, Place Details, and place photos. |
+| `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` | Recommended | Client-side key used to embed the Google Street View iframe in the Point Detail pane. Can be the same key as above (restrict by HTTP referrer). |
 | `MAPQUEST_API_KEY` | Optional | Fallback geocoder if Google is unavailable or not configured. |
 
 ### Where to get each key
 
 - **Mapbox tokens** → [account.mapbox.com/access-tokens](https://account.mapbox.com/access-tokens/). Create a *public* token and a separate *secret* token (grant it `styles:read` and `directions:read` scopes).
-- **Google Maps API key** → [Google Cloud Console](https://console.cloud.google.com/). Enable the **Geocoding API** then create a restricted API key.
+- **Google Maps API key** → [Google Cloud Console](https://console.cloud.google.com/). Enable the **Geocoding API**, **Places API**, and **Maps Embed API**, then create a restricted API key. Use the same key for both `GOOGLE_MAPS_API_KEY` and `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`, or create separate keys restricted by IP (server) and HTTP referrer (client) respectively.
 - **MapQuest API key** → [developer.mapquest.com](https://developer.mapquest.com/) — free tier available.
 
 > **Note:** The app works without Google/MapQuest keys (geocoding simply returns no results). The route overlay requires both Mapbox tokens.
@@ -111,10 +115,12 @@ All keys live in `.env.local`, which is **never committed** (covered by `.gitign
 
 1. **Search for a location** — type a city or address in the sidebar search box and press Enter or click the search button. The globe camera will fly to the pinned location.
 2. **Add more pins** — repeat the search to add a second location. An animated arc is drawn between sequential pins.
-3. **View a route** — once two or more pins are added, select an *Origin* and *Destination* from the dropdowns in the sidebar, then click **Get Route**. A Mapbox street-level map appears as an overlay panel.
-4. **Switch transport mode** — use the mode buttons in the route overlay (car, car without traffic, walking, cycling) to re-fetch the route.
-5. **Close the route** — click the × button in the route panel to dismiss it.
-6. **Control the globe** — use the Pause / Rotate button and the Speed slider to control auto-rotation. Click and drag the globe to manually orbit.
+3. **View point details** — click any pin label in the points list to open the Point Detail pane. It shows the nearest place's name, address, phone, hours, website, a photo, and a Street View embed. The first open fetches from Google; subsequent opens are served from the local cache.
+4. **Save to Quick Presets** — inside the Point Detail pane, click **Save to Quick Presets** to persist the location. It then appears as an amber button in the Quick Presets section of the sidebar — click it any time to instantly re-pin that location with no API call.
+5. **View a route** — once two or more pins are added, select an *Origin* and *Destination* from the dropdowns in the sidebar, then click **Get Route**. A Mapbox street-level map appears as an overlay panel.
+6. **Switch transport mode** — use the mode buttons in the route overlay (car, car without traffic, walking, cycling) to re-fetch the route.
+7. **Close the route** — click the × button in the route panel to dismiss it.
+8. **Control the globe** — use the Pause / Rotate button and the Speed slider to control auto-rotation. Click and drag the globe to manually orbit.
 
 ---
 
@@ -136,7 +142,8 @@ src/
 │           └── photo/route.ts  # Google Places photo proxy
 ├── components/
 │   ├── Globe.tsx               # Three.js / three-globe canvas component
-│   ├── CoordinatePanel.tsx     # Sidebar: search, pin list, route controls
+│   ├── CoordinatePanel.tsx     # Sidebar: search, pin list, route controls, presets
+│   ├── PointDetailPane.tsx     # Overlay pane: place info, Street View, save to presets
 │   └── MapboxRouteMap.tsx      # Mapbox GL overlay with route + congestion
 └── lib/
     ├── db.ts                   # SQLite database layer (caching + persistence)
@@ -147,16 +154,33 @@ src/
 
 ## Local Database
 
-Qterra automatically caches every API response in a local SQLite database (`data/qterra.db`). This gives you:
+Qterra automatically caches every external API response in a local SQLite database (`data/qterra.db`). This minimises API quota consumption during development — once a location has been fetched, subsequent requests are served entirely from the local DB.
 
-- **Recent searches** — all geocoding queries are stored and queryable.
-- **Saved locations** — place details and photos are persisted locally.
-- **Offline dev / mock data** — once you've fetched data, you can work without hitting external APIs.
-- **Photo caching** — place photos are served from the local DB on repeat requests, saving Google API quota.
+### What gets cached and when
 
-The database file is **git-ignored** — only the `data/README.md` with schema documentation is committed. The DB is created automatically on the first API call; no manual setup is needed.
+| Cache | DB table | Hit condition | APIs saved |
+|---|---|---|---|
+| **Geocoding results** | `geocode_results` | Same search query string | Google Geocoding / MapQuest |
+| **Place details** | `places` | Coordinates within ~100 m (±0.001°) | Google Nearby Search + Place Details (2 calls per lookup) |
+| **Place photos** | `place_photos` | Exact `photo_reference` match | Google Places Photo |
+| **Directions routes** | `directions_cache` | Same origin + destination coordinates | Mapbox Directions |
+| **Saved presets** | `saved_points` | Loaded on sidebar mount | No API call — lat/lng stored directly |
 
-See [data/README.md](data/README.md) for the full schema reference and inspection tips.
+### Cache behaviour by feature
+
+- **Location search** — on first geocode the result is stored in `geocode_results`. Repeat searches for the same query string skip the external call entirely.
+- **Point Detail pane** — when the pane opens, `/api/places` checks `places` for a row within ~100 m of the point's coordinates. On a cache hit the full place name, address, phone, hours, website, and photo reference are returned immediately without contacting Google. On a miss, the two-step Nearby Search → Place Details call is made and the result is persisted for next time.
+- **Place photos** — `/api/places/photo` stores the raw image bytes in `place_photos` keyed by `photo_reference`. The photo is served from SQLite on every subsequent view (`Cache-Control: public, max-age=86400` is also set on the response).
+- **Quick Presets (saved points)** — clicking "Save to Quick Presets" in the Point Detail pane writes the coordinate to `saved_points` via `POST /api/points`. The sidebar fetches this table on mount (and after each save), so preset buttons appear instantly — the globe and detail pane do not need to re-fetch anything from Google to use them.
+- **Route overlay** — Mapbox Directions responses are cached in `directions_cache` by origin/destination coordinates, so the same route is never fetched twice.
+
+### Notes
+
+- The database file is **git-ignored** — only the `data/README.md` with schema documentation is committed.
+- The DB is created automatically on the first API call; no manual setup or migrations are needed.
+- To clear the cache and force fresh API calls, simply delete `data/qterra.db` — it will be recreated on the next request.
+
+See [data/README.md](data/README.md) for the full schema reference and SQLite inspection tips.
 
 ---
 

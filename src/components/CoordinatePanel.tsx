@@ -42,6 +42,7 @@ export default function CoordinatePanel({
   routeActive,
   showGrid,
   onToggleGrid,
+  presetRefreshKey = 0,
 }: {
   coordinates: Coordinate[];
   onAdd: (c: Coordinate) => void;
@@ -56,11 +57,33 @@ export default function CoordinatePanel({
   routeActive: boolean;
   showGrid: boolean;
   onToggleGrid: () => void;
+  presetRefreshKey?: number;
 }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [geocoding, setGeocoding] = useState(false);
   const [routeOriginId, setRouteOriginId] = useState<string>("");
   const [routeDestId, setRouteDestId] = useState<string>("");
+  const [dbPresets, setDbPresets] = useState<Coordinate[]>([]);
+
+  // Fetch saved presets from DB; re-runs whenever a new preset is saved
+  useEffect(() => {
+    fetch("/api/points")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.points) {
+          setDbPresets(
+            data.points.map((p: { id: number; label: string; lat: number; lng: number; color?: string | null }) => ({
+              id: String(p.id),
+              label: p.label,
+              lat: p.lat,
+              lng: p.lng,
+              color: p.color ?? "#ffcc00",
+            }))
+          );
+        }
+      })
+      .catch(() => {});
+  }, [presetRefreshKey]);
 
   // Clear stale selections when a coordinate is removed
   useEffect(() => {
@@ -347,6 +370,26 @@ export default function CoordinatePanel({
                   id: String(nextId++),
                   ...p,
                   color: "#ffcc00",
+                })
+              }
+              style={{ cursor: "pointer" }}
+            >
+              {p.label}
+            </Button>
+          ))}
+          {dbPresets.map((p) => (
+            <Button
+              key={p.id}
+              variant="outline"
+              color="amber"
+              size="1"
+              onClick={() =>
+                onAdd({
+                  id: String(nextId++),
+                  label: p.label,
+                  lat: p.lat,
+                  lng: p.lng,
+                  color: p.color ?? "#ffcc00",
                 })
               }
               style={{ cursor: "pointer" }}

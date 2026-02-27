@@ -32,6 +32,7 @@ interface PointDetailPaneProps {
   onFocus: (c: Coordinate) => void;
   onRename: (id: string, newLabel: string) => void;
   googleMapsApiKey?: string;
+  onSaved?: () => void;
 }
 
 export default function PointDetailPane({
@@ -40,6 +41,7 @@ export default function PointDetailPane({
   onFocus,
   onRename,
   googleMapsApiKey,
+  onSaved,
 }: PointDetailPaneProps) {
   const [placeDetails, setPlaceDetails] = useState<PlaceDetails | null>(null);
   const [loading, setLoading] = useState(true);
@@ -103,6 +105,7 @@ export default function PointDetailPane({
         }),
       });
       setSaved(true);
+      onSaved?.();
     } catch {
       // silent
     } finally {
