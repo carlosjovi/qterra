@@ -86,13 +86,14 @@ export default function Home() {
   return (
     <main className="flex h-screen w-screen overflow-hidden bg-[#020a14]">
       {/* sidebar */}
-      <aside className="w-80 shrink-0 overflow-y-auto bg-[#020202]">
+      <aside className="w-80 shrink-0 flex flex-col bg-[#020202]">
         <Box px="4" py="3">
           <Heading size="3" weight="bold" style={{ color: "white", textTransform: "uppercase" }}>
             Qterra
           </Heading>
         </Box>
         <Separator size="4" />
+        <div className="flex-1 overflow-hidden">
         <CoordinatePanel
           coordinates={coordinates}
           onAdd={handleAdd}
@@ -109,6 +110,7 @@ export default function Home() {
           onToggleGrid={() => setShowGrid((p) => !p)}
           presetRefreshKey={presetRefreshKey}
         />
+        </div>
       </aside>
 
       {/* globe viewport */}
