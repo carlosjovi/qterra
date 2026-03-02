@@ -18,10 +18,9 @@ import {
   MagnifyingGlassIcon,
   Cross2Icon,
   GlobeIcon,
-  ResumeIcon,
-  PauseIcon,
+
   RocketIcon,
-  GridIcon,
+
   PaperPlaneIcon,
   MixIcon,
   GearIcon,
@@ -48,14 +47,11 @@ export default function CoordinatePanel({
   onRemove,
   onFocus,
   onSelect,
-  autoRotate,
-  onToggleRotate,
   rotationSpeed,
   onSpeedChange,
   onRoute,
   routeActive,
-  showGrid,
-  onToggleGrid,
+
   presetRefreshKey = 0,
   flights = [],
   flightsLoading = false,
@@ -85,14 +81,11 @@ export default function CoordinatePanel({
   onRemove: (id: string) => void;
   onFocus: (c: Coordinate) => void;
   onSelect: (c: Coordinate) => void;
-  autoRotate: boolean;
-  onToggleRotate: () => void;
   rotationSpeed: number;
   onSpeedChange: (speed: number) => void;
   onRoute: (origin: Coordinate, destination: Coordinate) => void;
   routeActive: boolean;
-  showGrid: boolean;
-  onToggleGrid: () => void;
+
   presetRefreshKey?: number;
   flights?: Flight[];
   flightsLoading?: boolean;
@@ -493,38 +486,6 @@ export default function CoordinatePanel({
             <Box>
               <SectionHeading>Globe Controls</SectionHeading>
               <Flex direction="column" gap="3" mt="3">
-                {/* Rotation toggle */}
-                <Flex align="center" justify="between">
-                  <Text size="2" color="gray">Auto-Rotation</Text>
-                  <Tooltip content={autoRotate ? "Pause rotation" : "Resume rotation"}>
-                    <Button
-                      variant="soft"
-                      size="1"
-                      color="amber"
-                      onClick={onToggleRotate}
-                    >
-                      {autoRotate ? <PauseIcon /> : <ResumeIcon />}
-                      {autoRotate ? "Pause" : "Rotate"}
-                    </Button>
-                  </Tooltip>
-                </Flex>
-
-                {/* Grid toggle */}
-                <Flex align="center" justify="between">
-                  <Text size="2" color="gray">Grid Lines</Text>
-                  <Tooltip content={showGrid ? "Hide grid lines" : "Show grid lines"}>
-                    <Button
-                      variant={showGrid ? "solid" : "soft"}
-                      size="1"
-                      color="amber"
-                      onClick={onToggleGrid}
-                    >
-                      <GridIcon />
-                      {showGrid ? "On" : "Off"}
-                    </Button>
-                  </Tooltip>
-                </Flex>
-
                 {/* Speed slider */}
                 <Flex direction="column" gap="2">
                   <Flex align="center" justify="between">

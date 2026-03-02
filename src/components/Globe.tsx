@@ -780,14 +780,26 @@ function GlobeObject({
     };
   }, [focusTarget, camera]);
 
-  // Programmatic zoom from +/- buttons
+  // Programmatic zoom from +/- buttons (smooth animated transition)
+  const zoomAnimRef = useRef<{ start: number; target: number; progress: number } | null>(null);
   useEffect(() => {
     if (!zoomTrigger) return;
     const dist = camera.position.length();
     const newDist = Math.min(Math.max(dist * zoomTrigger.factor, 120), 500);
-    camera.position.setLength(newDist);
-    if (controlsRef.current) controlsRef.current.update();
+    zoomAnimRef.current = { start: dist, target: newDist, progress: 0 };
   }, [zoomTrigger, camera]);
+
+  useFrame((_, delta) => {
+    const anim = zoomAnimRef.current;
+    if (!anim) return;
+    // Advance progress; complete the transition in ~0.25s
+    anim.progress = Math.min(anim.progress + delta / 0.25, 1);
+    const t = easeInOutCubic(anim.progress);
+    const currentDist = anim.start + (anim.target - anim.start) * t;
+    camera.position.setLength(currentDist);
+    if (controlsRef.current) controlsRef.current.update();
+    if (anim.progress >= 1) zoomAnimRef.current = null;
+  });
 
   return (
     <>
@@ -825,9 +837,11 @@ function Lighting() {
 export default function Globe({
   coordinates = [],
   autoRotate = true,
+  onToggleRotate,
   rotationSpeed = 1,
   focusTarget = null,
   showGrid = true,
+  onToggleGrid,
   flights = [],
   selectedFlightIcao = null,
   flightRoute = null,
@@ -837,9 +851,11 @@ export default function Globe({
 }: {
   coordinates?: Coordinate[];
   autoRotate?: boolean;
+  onToggleRotate?: () => void;
   rotationSpeed?: number;
   focusTarget?: Coordinate | null;
   showGrid?: boolean;
+  onToggleGrid?: () => void;
   flights?: Flight[];
   selectedFlightIcao?: string | null;
   flightRoute?: FlightRoute | null;
@@ -853,10 +869,10 @@ export default function Globe({
   const [zoomTrigger, setZoomTrigger] = useState<{ id: number; factor: number } | null>(null);
   const zoomIdRef = useRef(0);
   const handleZoomIn = useCallback(() => {
-    setZoomTrigger({ id: ++zoomIdRef.current, factor: 0.75 });
+    setZoomTrigger({ id: ++zoomIdRef.current, factor: 0.9 });
   }, []);
   const handleZoomOut = useCallback(() => {
-    setZoomTrigger({ id: ++zoomIdRef.current, factor: 1.33 });
+    setZoomTrigger({ id: ++zoomIdRef.current, factor: 1.11 });
   }, []);
 
   return (
@@ -869,7 +885,7 @@ export default function Globe({
         </div>
       )}
 
-      {/* Zoom controls */}
+      {/* Zoom & rotation controls */}
       <div className="absolute top-4 right-4 z-20 flex flex-col gap-1">
         <button
           onClick={handleZoomIn}
@@ -885,6 +901,34 @@ export default function Globe({
         >
           −
         </button>
+        {onToggleRotate && (
+          <button
+            onClick={onToggleRotate}
+            className="w-8 h-8 rounded bg-white/10 hover:bg-white/20 text-white text-sm leading-none flex items-center justify-center backdrop-blur-sm border border-white/15 transition-colors mt-1"
+            aria-label={autoRotate ? "Pause rotation" : "Resume rotation"}
+            title={autoRotate ? "Pause rotation" : "Resume rotation"}
+          >
+            {autoRotate ? (
+              <svg width="14" height="14" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6.04995 2.74998C6.04995 2.44623 5.80371 2.19998 5.49995 2.19998C5.19619 2.19998 4.94995 2.44623 4.94995 2.74998V12.25C4.94995 12.5537 5.19619 12.8 5.49995 12.8C5.80371 12.8 6.04995 12.5537 6.04995 12.25V2.74998ZM10.05 2.74998C10.05 2.44623 9.80371 2.19998 9.49995 2.19998C9.19619 2.19998 8.94995 2.44623 8.94995 2.74998V12.25C8.94995 12.5537 9.19619 12.8 9.49995 12.8C9.80371 12.8 10.05 12.5537 10.05 12.25V2.74998Z" fill="currentColor" fillRule="evenodd" clipRule="evenodd"></path></svg>
+            ) : (
+              <svg width="14" height="14" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3.24182 2.32181C3.3919 2.23132 3.5784 2.22601 3.73338 2.30781L12.7334 7.05781C12.8974 7.14436 13 7.31457 13 7.5C13 7.68543 12.8974 7.85564 12.7334 7.94219L3.73338 12.6922C3.5784 12.774 3.3919 12.7687 3.24182 12.6782C3.09175 12.5877 3 12.4252 3 12.25V2.75C3 2.57476 3.09175 2.4123 3.24182 2.32181ZM4 3.57925V11.4207L11.4288 7.5L4 3.57925Z" fill="currentColor" fillRule="evenodd" clipRule="evenodd"></path></svg>
+            )}
+          </button>
+        )}
+        {onToggleGrid && (
+          <button
+            onClick={onToggleGrid}
+            className={`w-8 h-8 rounded text-white text-sm leading-none flex items-center justify-center backdrop-blur-sm border transition-colors ${
+              showGrid
+                ? "bg-white/20 border-white/30"
+                : "bg-white/10 hover:bg-white/20 border-white/15"
+            }`}
+            aria-label={showGrid ? "Hide grid" : "Show grid"}
+            title={showGrid ? "Hide grid" : "Show grid"}
+          >
+            <svg width="14" height="14" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12.5 2H2.5C2.22386 2 2 2.22386 2 2.5V12.5C2 12.7761 2.22386 13 2.5 13H12.5C12.7761 13 13 12.7761 13 12.5V2.5C13 2.22386 12.7761 2 12.5 2ZM2.5 1C1.67157 1 1 1.67157 1 2.5V12.5C1 13.3284 1.67157 14 2.5 14H12.5C13.3284 14 14 13.3284 14 12.5V2.5C14 1.67157 13.3284 1 12.5 1H2.5ZM10 5.5V2H5V5.5H2V10H5V13H10V10H13V5.5H10ZM5 6.5H2V9H5V6.5ZM6 5.5V2H9V5.5H6ZM6 6.5V9H9V6.5H6ZM10 6.5V9H13V6.5H10ZM9 10H6V13H9V10ZM10 10V13H12.5C12.7761 13 13 12.7761 13 12.5V10H10ZM5 10H2V12.5C2 12.7761 2.22386 13 2.5 13H5V10ZM2 5.5V2.5C2 2.22386 2.22386 2 2.5 2H5V5.5H2ZM10 2H12.5C12.7761 2 13 2.22386 13 2.5V5.5H10V2Z" fill="currentColor" fillRule="evenodd" clipRule="evenodd"></path></svg>
+          </button>
+        )}
       </div>
 
       <Canvas

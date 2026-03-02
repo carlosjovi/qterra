@@ -367,14 +367,10 @@ export default function Home() {
           onRemove={handleRemove}
           onFocus={handleFocus}
           onSelect={handleSelectPoint}
-          autoRotate={autoRotate}
-          onToggleRotate={() => setAutoRotate((p) => !p)}
           rotationSpeed={rotationSpeed}
           onSpeedChange={setRotationSpeed}
           onRoute={handleRoute}
           routeActive={showRouteMap}
-          showGrid={showGrid}
-          onToggleGrid={() => setShowGrid((p) => !p)}
           presetRefreshKey={presetRefreshKey}
           flights={flights}
           flightsLoading={flightsLoading}
@@ -408,9 +404,11 @@ export default function Home() {
           <Globe
             coordinates={coordinates}
             autoRotate={autoRotate}
+            onToggleRotate={() => setAutoRotate((p) => !p)}
             rotationSpeed={rotationSpeed}
-            focusTarget={focusTarget}
             showGrid={showGrid}
+            onToggleGrid={() => setShowGrid((p) => !p)}
+            focusTarget={focusTarget}
             flights={globeFlights}
             selectedFlightIcao={selectedFlightIcao}
             flightRoute={flightRoute}
