@@ -932,7 +932,7 @@ export default function Globe({
       </div>
 
       <Canvas
-        camera={{ position: [0, 0, 300], fov: 50, near: 1, far: 1000 }}
+        camera={{ position: [-300, 0, 0], fov: 50, near: 1, far: 1000 }}
         gl={{ antialias: true, alpha: false }}
       >
         <color attach="background" args={["#0d0d0d"]} />

@@ -87,6 +87,78 @@ interface Props {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Map styles & overlays                                              */
+/* ------------------------------------------------------------------ */
+
+type MapStyle = "dark" | "satellite" | "satellite-streets" | "outdoors" | "light";
+
+const MAP_STYLES: Record<MapStyle, { url: string; label: string }> = {
+  dark: { url: "mapbox://styles/mapbox/dark-v11", label: "Dark" },
+  light: { url: "mapbox://styles/mapbox/light-v11", label: "Light" },
+  outdoors: { url: "mapbox://styles/mapbox/outdoors-v12", label: "Outdoors" },
+  satellite: { url: "mapbox://styles/mapbox/satellite-v9", label: "Satellite" },
+  "satellite-streets": { url: "mapbox://styles/mapbox/satellite-streets-v12", label: "Hybrid" },
+};
+
+function getFogConfig(style: MapStyle) {
+  const isDark = style === "dark" || style === "satellite" || style === "satellite-streets";
+  return isDark
+    ? {
+        color: "rgb(12, 12, 20)",
+        "high-color": "rgb(36, 92, 223)",
+        "horizon-blend": 0.02,
+        "space-color": "rgb(11, 11, 25)",
+        "star-intensity": 0.6,
+      }
+    : {
+        color: "rgb(186, 210, 235)",
+        "high-color": "rgb(36, 92, 223)",
+        "horizon-blend": 0.02,
+        "space-color": "rgb(220, 230, 240)",
+        "star-intensity": 0.0,
+      };
+}
+
+function addBuildingsLayer(map: mapboxgl.Map, style: MapStyle) {
+  try {
+    const layers = map.getStyle().layers;
+    if (!layers) return;
+    // Insert buildings below the first symbol/label layer
+    const labelLayerId = layers.find(
+      (l: any) => l.type === "symbol" && l.layout?.["text-field"],
+    )?.id;
+    const isDark = style === "dark" || style === "satellite" || style === "satellite-streets";
+    map.addLayer(
+      {
+        id: "3d-buildings",
+        source: "composite",
+        "source-layer": "building",
+        filter: ["==", "extrude", "true"],
+        type: "fill-extrusion",
+        minzoom: 14,
+        paint: {
+          "fill-extrusion-color": isDark ? "#445" : "#ddd",
+          "fill-extrusion-height": [
+            "interpolate", ["linear"], ["zoom"],
+            14, 0,
+            14.5, ["get", "height"],
+          ],
+          "fill-extrusion-base": [
+            "interpolate", ["linear"], ["zoom"],
+            14, 0,
+            14.5, ["get", "min_height"],
+          ],
+          "fill-extrusion-opacity": 0.7,
+        },
+      } as any,
+      labelLayerId,
+    );
+  } catch {
+    // Style may not support buildings (e.g., satellite-v9)
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
 
@@ -104,8 +176,10 @@ export default function MapboxFlightMap({
   const flightMarkersRef = useRef<Map<string, mapboxgl.Marker>>(new Map());
   const routeMarkersRef = useRef<mapboxgl.Marker[]>([]);
   const [mapLoaded, setMapLoaded] = useState(false);
+  const [mapStyle, setMapStyle] = useState<MapStyle>("dark");
+  const [terrain3d, setTerrain3d] = useState(false);
 
-  /* ---- initialise map ---- */
+  /* ---- initialise map (runs once) ---- */
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -119,9 +193,10 @@ export default function MapboxFlightMap({
 
     const map = new mapboxgl.Map({
       container: containerRef.current,
-      style: "mapbox://styles/mapbox/dark-v11",
-      center: [0, 20],
+      style: MAP_STYLES["dark"].url,
+      center: [-90, 20],
       zoom: 2,
+      projection: "globe" as any,
     });
 
     map.addControl(new mapboxgl.NavigationControl(), "top-right");
@@ -130,6 +205,13 @@ export default function MapboxFlightMap({
     map.on("load", () => {
       // Ensure the map fills its container after mount
       map.resize();
+
+      // Atmosphere / fog — gives the globe a realistic look
+      map.setFog(getFogConfig("dark") as any);
+
+      // 3D buildings (auto-show when zoomed to street level)
+      addBuildingsLayer(map, "dark");
+
       setMapLoaded(true);
     });
 
@@ -137,8 +219,57 @@ export default function MapboxFlightMap({
       map.remove();
       mapRef.current = null;
       setMapLoaded(false);
+      // Clear marker refs so data effects start fresh with new map
+      markersRef.current = [];
+      flightMarkersRef.current.clear();
+      routeMarkersRef.current = [];
     };
-  }, [mapboxToken]);
+  }, [mapboxToken]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ---- swap style in-place (preserves camera position & zoom) ---- */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoaded) return;
+
+    // setStyle swaps tiles but keeps center/zoom/bearing/pitch
+    map.setStyle(MAP_STYLES[mapStyle].url);
+
+    // Re-apply overlays once the new style finishes loading
+    const onStyleLoad = () => {
+      map.setFog(getFogConfig(mapStyle) as any);
+      addBuildingsLayer(map, mapStyle);
+
+      // Re-apply terrain if it was enabled
+      if (terrain3d) {
+        if (!map.getSource("mapbox-dem")) {
+          map.addSource("mapbox-dem", {
+            type: "raster-dem",
+            url: "mapbox://mapbox.mapbox-terrain-dem-v1",
+            tileSize: 512,
+            maxzoom: 14,
+          });
+        }
+        map.setTerrain({ source: "mapbox-dem", exaggeration: 1.5 });
+        if (!map.getLayer("sky-layer")) {
+          map.addLayer({
+            id: "sky-layer",
+            type: "sky" as any,
+            paint: {
+              "sky-type": "atmosphere",
+              "sky-atmosphere-sun": [0, 90],
+              "sky-atmosphere-sun-intensity": 15,
+            },
+          } as any);
+        }
+      }
+    };
+
+    map.once("style.load", onStyleLoad);
+
+    return () => {
+      map.off("style.load", onStyleLoad);
+    };
+  }, [mapStyle]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ---- resize map when container dimensions change ---- */
   useEffect(() => {
@@ -148,6 +279,45 @@ export default function MapboxFlightMap({
     const timer = setTimeout(() => map.resize(), 50);
     return () => clearTimeout(timer);
   }, [mapLoaded]);
+
+  /* ---- 3D terrain toggle ---- */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoaded) return;
+
+    if (terrain3d) {
+      // Add DEM elevation source if not already present
+      if (!map.getSource("mapbox-dem")) {
+        map.addSource("mapbox-dem", {
+          type: "raster-dem",
+          url: "mapbox://mapbox.mapbox-terrain-dem-v1",
+          tileSize: 512,
+          maxzoom: 14,
+        });
+      }
+      map.setTerrain({ source: "mapbox-dem", exaggeration: 1.5 });
+
+      // Sky layer for a nice atmosphere above the horizon
+      if (!map.getLayer("sky-layer")) {
+        map.addLayer({
+          id: "sky-layer",
+          type: "sky" as any,
+          paint: {
+            "sky-type": "atmosphere",
+            "sky-atmosphere-sun": [0, 90],
+            "sky-atmosphere-sun-intensity": 15,
+          },
+        } as any);
+      }
+    } else {
+      if ((map as any).getTerrain?.()) {
+        map.setTerrain(null as any);
+      }
+      if (map.getLayer("sky-layer")) {
+        map.removeLayer("sky-layer");
+      }
+    }
+  }, [terrain3d, mapLoaded]);
 
   /* ---- coordinate points & arcs ---- */
   useEffect(() => {
@@ -474,6 +644,110 @@ export default function MapboxFlightMap({
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       <div ref={containerRef} style={{ position: "absolute", inset: 0 }} />
+
+      {/* ---- Map style & layer controls ---- */}
+      <div
+        style={{
+          position: "absolute",
+          top: 12,
+          left: 12,
+          zIndex: 10,
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+          pointerEvents: "auto",
+        }}
+      >
+        {/* Style picker */}
+        <div
+          style={{
+            background: "rgba(0,0,0,0.7)",
+            backdropFilter: "blur(8px)",
+            borderRadius: 8,
+            padding: "8px 10px",
+            border: "1px solid rgba(255,255,255,0.1)",
+          }}
+        >
+          <div
+            style={{
+              fontSize: 10,
+              color: "rgba(255,255,255,0.5)",
+              marginBottom: 6,
+              fontWeight: 600,
+              textTransform: "uppercase",
+              letterSpacing: "0.5px",
+            }}
+          >
+            Style
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+            {(Object.keys(MAP_STYLES) as MapStyle[]).map((key) => (
+              <button
+                key={key}
+                onClick={() => setMapStyle(key)}
+                style={{
+                  padding: "4px 8px",
+                  fontSize: 11,
+                  borderRadius: 4,
+                  border: "1px solid",
+                  borderColor:
+                    mapStyle === key ? "rgba(255,170,0,0.6)" : "rgba(255,255,255,0.15)",
+                  background:
+                    mapStyle === key ? "rgba(255,170,0,0.2)" : "rgba(255,255,255,0.05)",
+                  color: mapStyle === key ? "#ffa500" : "rgba(255,255,255,0.7)",
+                  cursor: "pointer",
+                  transition: "all 0.15s ease",
+                }}
+              >
+                {MAP_STYLES[key].label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Layer toggles */}
+        <div
+          style={{
+            background: "rgba(0,0,0,0.7)",
+            backdropFilter: "blur(8px)",
+            borderRadius: 8,
+            padding: "8px 10px",
+            border: "1px solid rgba(255,255,255,0.1)",
+          }}
+        >
+          <div
+            style={{
+              fontSize: 10,
+              color: "rgba(255,255,255,0.5)",
+              marginBottom: 6,
+              fontWeight: 600,
+              textTransform: "uppercase",
+              letterSpacing: "0.5px",
+            }}
+          >
+            Layers
+          </div>
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              fontSize: 12,
+              color: terrain3d ? "#ffa500" : "rgba(255,255,255,0.7)",
+              cursor: "pointer",
+              userSelect: "none",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={terrain3d}
+              onChange={() => setTerrain3d((p) => !p)}
+              style={{ accentColor: "#ffa500" }}
+            />
+            3D Terrain
+          </label>
+        </div>
+      </div>
     </div>
   );
 }
