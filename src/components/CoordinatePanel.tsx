@@ -27,8 +27,9 @@ import {
   GearIcon,
 } from "@radix-ui/react-icons";
 import * as SliderPrimitive from "@radix-ui/react-slider";
-import type { Coordinate, Flight, FlightRoute } from "@/lib/types";
+import type { Coordinate, Flight, FlightRoute, Satellite, SatelliteCategory } from "@/lib/types";
 import FlightsPanel from "@/components/FlightsPanel";
+import SatellitesPanel from "@/components/SatellitesPanel";
 
 type Tab = "places" | "flights" | "satellites" | "settings";
 
@@ -68,6 +69,16 @@ export default function CoordinatePanel({
   flightRoute = null,
   flightRouteLoading = false,
   flightRouteError = null,
+  satellites = [],
+  satellitesLoading = false,
+  satellitesError = null,
+  satellitesEnabled = false,
+  onToggleSatellites,
+  onRefreshSatellites,
+  onSelectSatellite,
+  selectedSatId = null,
+  satelliteCategory = 0 as SatelliteCategory,
+  onSatelliteCategoryChange,
 }: {
   coordinates: Coordinate[];
   onAdd: (c: Coordinate) => void;
@@ -95,6 +106,16 @@ export default function CoordinatePanel({
   flightRoute?: FlightRoute | null;
   flightRouteLoading?: boolean;
   flightRouteError?: string | null;
+  satellites?: Satellite[];
+  satellitesLoading?: boolean;
+  satellitesError?: string | null;
+  satellitesEnabled?: boolean;
+  onToggleSatellites?: () => void;
+  onRefreshSatellites?: () => void;
+  onSelectSatellite?: (s: Satellite | null) => void;
+  selectedSatId?: number | null;
+  satelliteCategory?: SatelliteCategory;
+  onSatelliteCategoryChange?: (cat: SatelliteCategory) => void;
 }) {
   const [activeTab, setActiveTab] = useState<Tab>("places");
   const [searchQuery, setSearchQuery] = useState("");
@@ -452,13 +473,18 @@ export default function CoordinatePanel({
 
         {/* ──── SATELLITES ──── */}
         {activeTab === "satellites" && (
-          <Flex direction="column" align="center" justify="center" gap="3" p="6" style={{ minHeight: 300 }}>
-            <MixIcon width="32" height="32" style={{ color: "var(--gray-8)" }} />
-            <Heading size="2" style={{ color: "var(--gray-11)" }}>Satellite Tracker</Heading>
-            <Text size="1" color="gray" align="center">
-              Live satellite orbit tracking integration coming soon.
-            </Text>
-          </Flex>
+          <SatellitesPanel
+            satellites={satellites}
+            loading={satellitesLoading}
+            error={satellitesError ?? null}
+            enabled={satellitesEnabled}
+            onToggleEnabled={onToggleSatellites ?? (() => {})}
+            onRefresh={onRefreshSatellites ?? (() => {})}
+            onSelectSatellite={onSelectSatellite ?? (() => {})}
+            selectedSatId={selectedSatId ?? null}
+            category={satelliteCategory ?? (0 as SatelliteCategory)}
+            onCategoryChange={onSatelliteCategoryChange ?? (() => {})}
+          />
         )}
 
         {/* ──── SETTINGS ──── */}

@@ -247,6 +247,7 @@ export default function MapboxFlightMap({
         // Create new marker
         const el = document.createElement("div");
         el.style.cursor = "pointer";
+        el.style.zIndex = "10";
         el.innerHTML = `<svg width="${isSelected ? 28 : 18}" height="${isSelected ? 28 : 18}" viewBox="0 0 24 24" style="transform: rotate(${f.heading ?? 0}deg); transition: transform 0.5s ease;">
           <path d="M12 2 L16 10 L22 12 L16 14 L12 22 L8 14 L2 12 L8 10 Z"
                 fill="${isSelected ? "#ffa500" : "#60a5fa"}"

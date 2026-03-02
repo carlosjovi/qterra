@@ -5,7 +5,7 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import ThreeGlobe from "three-globe";
 import * as THREE from "three";
-import type { Coordinate, GeoJSON, Flight, FlightRoute } from "@/lib/types";
+import type { Coordinate, GeoJSON, Flight, FlightRoute, Satellite } from "@/lib/types";
 
 const GEOJSON_URL =
   "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_110m_admin_0_countries.geojson";
@@ -62,6 +62,9 @@ function GlobeObject({
   flights,
   selectedFlightIcao,
   flightRoute,
+  satellites,
+  selectedSatId,
+  satelliteOrbit,
   onGlobeReady,
   zoomTrigger,
 }: {
@@ -73,6 +76,9 @@ function GlobeObject({
   flights: Flight[];
   selectedFlightIcao: string | null;
   flightRoute: FlightRoute | null;
+  satellites: Satellite[];
+  selectedSatId: number | null;
+  satelliteOrbit: Satellite[];
   onGlobeReady?: () => void;
   zoomTrigger?: { id: number; factor: number } | null;
 }) {
@@ -80,6 +86,8 @@ function GlobeObject({
   const gridGroupRef = useRef<THREE.Group | null>(null);
   const flightArcsGroupRef = useRef<THREE.Group | null>(null);
   const routeArcGroupRef = useRef<THREE.Group | null>(null);
+  const satelliteGroupRef = useRef<THREE.Group | null>(null);
+  const satOrbitGroupRef = useRef<THREE.Group | null>(null);
   const groupRef = useRef<THREE.Group>(null!);
   const controlsRef = useRef<any>(null);
   const { camera } = useThree();
@@ -287,6 +295,16 @@ function GlobeObject({
     const routeGroup = new THREE.Group();
     groupRef.current.add(routeGroup);
     routeArcGroupRef.current = routeGroup;
+
+    // Satellite group
+    const satGroup = new THREE.Group();
+    groupRef.current.add(satGroup);
+    satelliteGroupRef.current = satGroup;
+
+    // Satellite orbit path group
+    const satOrbitGroup = new THREE.Group();
+    groupRef.current.add(satOrbitGroup);
+    satOrbitGroupRef.current = satOrbitGroup;
 
     // Reset flight refs when the globe is rebuilt
     flightObjMapRef.current.clear();
@@ -547,6 +565,135 @@ function GlobeObject({
 
   }, [flightRoute, globeEpoch]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Render satellite dots ──
+  useEffect(() => {
+    const group = satelliteGroupRef.current;
+    if (!group) return;
+
+    // Dispose previous satellite meshes
+    while (group.children.length) {
+      const child = group.children[0] as THREE.Mesh;
+      child.geometry?.dispose();
+      if (Array.isArray(child.material)) {
+        child.material.forEach((m) => m.dispose());
+      } else {
+        (child.material as THREE.Material)?.dispose();
+      }
+      group.remove(child);
+    }
+
+    if (!satellites || satellites.length === 0) return;
+
+    const GLOBE_R = 100; // ThreeGlobe default radius
+    // Shared geometry for all normal dots
+    const dotGeom = new THREE.SphereGeometry(0.3, 8, 8);
+    // Larger geometry for selected satellite
+    const selGeom = new THREE.SphereGeometry(0.6, 12, 12);
+    const selRingGeom = new THREE.SphereGeometry(1.2, 12, 12);
+
+    // Orbit-type color palette
+    const orbitColor = (altKm: number): number => {
+      if (altKm < 2000)  return 0x38bdf8; // LEO  – sky-blue
+      if (altKm < 35786) return 0x4ade80; // MEO  – green
+      if (altKm < 36786) return 0xfb923c; // GEO  – orange
+      return 0xf87171;                     // HEO  – red
+    };
+
+    for (const sat of satellites) {
+      const isSelected = sat.satid === selectedSatId;
+
+      // Scale altitude: LEO satellites (~200-2000 km) should be visibly above globe
+      // but not too far. Globe radius = 100, Earth radius = 6371 km.
+      // Factor: alt_km / 6371 * 100 — but boosted for visibility
+      const altFactor = Math.max(0.5, Math.min(sat.altitude / 6371 * 100 * 1.5, 60));
+      const r = GLOBE_R + altFactor;
+
+      const pos = latLngToVec3(sat.lat, sat.lng, r);
+
+      const color = isSelected ? 0xfbbf24 : orbitColor(sat.altitude);
+      const mat = new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: isSelected ? 1.0 : 0.85,
+        depthWrite: false,
+      });
+
+      const mesh = new THREE.Mesh(isSelected ? selGeom : dotGeom, mat);
+      mesh.position.copy(pos);
+      group.add(mesh);
+
+      // Add glow ring for selected satellite
+      if (isSelected) {
+        const ringMat = new THREE.MeshBasicMaterial({
+          color: 0xfbbf24,
+          transparent: true,
+          opacity: 0.25,
+          depthWrite: false,
+        });
+        const ringMesh = new THREE.Mesh(selRingGeom, ringMat);
+        ringMesh.position.copy(pos);
+        group.add(ringMesh);
+      }
+    }
+  }, [satellites, selectedSatId, globeEpoch]);
+
+  // ── Render satellite orbit path ──
+  useEffect(() => {
+    const group = satOrbitGroupRef.current;
+    if (!group) return;
+
+    // Dispose previous orbit geometry
+    while (group.children.length) {
+      const child = group.children[0] as THREE.Mesh;
+      child.geometry?.dispose();
+      if (Array.isArray(child.material)) {
+        child.material.forEach((m) => m.dispose());
+      } else {
+        (child.material as THREE.Material)?.dispose();
+      }
+      group.remove(child);
+    }
+
+    if (!satelliteOrbit || satelliteOrbit.length < 2) return;
+
+    const GLOBE_R = 100;
+    const SEGMENTS = 6;
+    const TUBE_RADIUS = 0.15;
+
+    // Build 3D points along the predicted orbit path
+    const orbitPoints: THREE.Vector3[] = satelliteOrbit.map((p) => {
+      const altFactor = Math.max(0.5, Math.min(p.altitude / 6371 * 100 * 1.5, 60));
+      return latLngToVec3(p.lat, p.lng, GLOBE_R + altFactor);
+    });
+
+    // Create the orbit tube in one piece using CatmullRomCurve3
+    const curve = new THREE.CatmullRomCurve3(orbitPoints, false, "centripetal", 0.5);
+    const geom = new THREE.TubeGeometry(curve, Math.min(orbitPoints.length * 2, 512), TUBE_RADIUS, SEGMENTS, false);
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0xfbbf24, // amber to match selection highlight
+      transparent: true,
+      opacity: 0.6,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    group.add(new THREE.Mesh(geom, mat));
+
+    // Add small dots at regular intervals along the path (every ~5 min = every ~17 samples at 300/90min)
+    const dotGeom = new THREE.SphereGeometry(0.2, 6, 6);
+    const dotMat = new THREE.MeshBasicMaterial({
+      color: 0xfbbf24,
+      transparent: true,
+      opacity: 0.4,
+      depthWrite: false,
+    });
+    const dotInterval = Math.max(1, Math.floor(satelliteOrbit.length / 30));
+    for (let i = dotInterval; i < orbitPoints.length; i += dotInterval) {
+      const dotMesh = new THREE.Mesh(dotGeom, dotMat);
+      dotMesh.position.copy(orbitPoints[i]);
+      group.add(dotMesh);
+    }
+  }, [satelliteOrbit, globeEpoch]);
+
   // Toggle grid visibility without rebuilding
   useEffect(() => {
     if (gridGroupRef.current) {
@@ -684,6 +831,9 @@ export default function Globe({
   flights = [],
   selectedFlightIcao = null,
   flightRoute = null,
+  satellites = [],
+  selectedSatId = null,
+  satelliteOrbit = [],
 }: {
   coordinates?: Coordinate[];
   autoRotate?: boolean;
@@ -693,6 +843,9 @@ export default function Globe({
   flights?: Flight[];
   selectedFlightIcao?: string | null;
   flightRoute?: FlightRoute | null;
+  satellites?: Satellite[];
+  selectedSatId?: number | null;
+  satelliteOrbit?: Satellite[];
 }) {
   const [ready, setReady] = useState(false);
   const handleReady = useCallback(() => setReady(true), []);
@@ -749,6 +902,9 @@ export default function Globe({
           flights={flights}
           selectedFlightIcao={selectedFlightIcao}
           flightRoute={flightRoute}
+          satellites={satellites}
+          selectedSatId={selectedSatId}
+          satelliteOrbit={satelliteOrbit ?? []}
           onGlobeReady={handleReady}
           zoomTrigger={zoomTrigger}
         />

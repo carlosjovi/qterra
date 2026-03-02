@@ -5,7 +5,7 @@ import dynamic from "next/dynamic";
 import { Box, Flex, Heading, Text, Separator } from "@radix-ui/themes";
 import CoordinatePanel from "@/components/CoordinatePanel";
 import PointDetailPane from "@/components/PointDetailPane";
-import type { Coordinate, Flight, FlightRoute } from "@/lib/types";
+import type { Coordinate, Flight, FlightRoute, Satellite, SatelliteCategory } from "@/lib/types";
 
 // three-globe / R3F can't SSR – dynamic import with ssr: false
 const Globe = dynamic(() => import("@/components/Globe"), { ssr: false });
@@ -47,6 +47,18 @@ export default function Home() {
   const flightTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const routeFetchRef = useRef<AbortController | null>(null);
 
+  // Satellite tracking state
+  const [satellites, setSatellites] = useState<Satellite[]>([]);
+  const [satellitesEnabled, setSatellitesEnabled] = useState(false);
+  const [satellitesLoading, setSatellitesLoading] = useState(false);
+  const [satellitesError, setSatellitesError] = useState<string | null>(null);
+  const [selectedSatId, setSelectedSatId] = useState<number | null>(null);
+  const [satelliteCategory, setSatelliteCategory] = useState<SatelliteCategory>(0);
+  const [satelliteOrbit, setSatelliteOrbit] = useState<Satellite[]>([]);
+  const [satelliteOrbitLoading, setSatelliteOrbitLoading] = useState(false);
+  const satTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const satOrbitFetchRef = useRef<AbortController | null>(null);
+
   const fetchFlights = useCallback(async () => {
     setFlightsLoading(true);
     setFlightsError(null);
@@ -83,6 +95,112 @@ export default function Home() {
       if (flightTimerRef.current) clearInterval(flightTimerRef.current);
     };
   }, [flightsEnabled, fetchFlights]);
+
+  // ── Satellite fetching (two hemispheres for global coverage) ──
+  const fetchSatellites = useCallback(async (cat?: SatelliteCategory) => {
+    setSatellitesLoading(true);
+    setSatellitesError(null);
+    try {
+      const useCat = cat ?? satelliteCategory;
+      // Fetch from two observer points 180° apart; each has a 90°
+      // search radius so the circles meet/overlap at 0° and ±180° — full
+      // global coverage with only 2 API calls instead of 3.
+      const observers = [
+        { lat: "0", lng: "90" },
+        { lat: "0", lng: "-90" },
+      ];
+      const fetches = observers.map((obs) => {
+        const params = new URLSearchParams({
+          mode: "above",
+          lat: obs.lat,
+          lng: obs.lng,
+          alt: "0",
+          radius: "90",
+          category: String(useCat),
+        });
+        return fetch(`/api/satellites?${params}`).then((r) => r.json());
+      });
+      const results = await Promise.all(fetches);
+      // Merge & deduplicate by satid
+      const seen = new Map<number, any>();
+      for (const data of results) {
+        if (data.satellites) {
+          for (const s of data.satellites) {
+            seen.set(s.satid, s);
+          }
+        }
+      }
+      setSatellites([...seen.values()]);
+      // Surface first error if both failed
+      const firstError = results.find((d) => d.error);
+      if (seen.size === 0 && firstError) {
+        setSatellitesError(firstError.error);
+      }
+    } catch {
+      setSatellitesError("Network error — retrying…");
+    } finally {
+      setSatellitesLoading(false);
+    }
+  }, [satelliteCategory]);
+
+  // Auto-polling when enabled
+  useEffect(() => {
+    if (satellitesEnabled) {
+      fetchSatellites();
+      satTimerRef.current = setInterval(() => fetchSatellites(), 120_000); // refresh every 2 min
+    } else {
+      setSatellites([]);
+      setSelectedSatId(null);
+      if (satTimerRef.current) clearInterval(satTimerRef.current);
+    }
+    return () => {
+      if (satTimerRef.current) clearInterval(satTimerRef.current);
+    };
+  }, [satellitesEnabled, fetchSatellites]);
+
+  const handleToggleSatellites = useCallback(() => {
+    setSatellitesEnabled((p) => !p);
+  }, []);
+
+  const handleSatelliteCategoryChange = useCallback((cat: SatelliteCategory) => {
+    setSatelliteCategory(cat);
+    if (satellitesEnabled) {
+      // Re-fetch immediately with new category
+      fetchSatellites(cat);
+    }
+  }, [satellitesEnabled, fetchSatellites]);
+
+  const handleSelectSatellite = useCallback((s: Satellite | null) => {
+    setSelectedSatId(s?.satid ?? null);
+    // Clear previous orbit
+    satOrbitFetchRef.current?.abort();
+    setSatelliteOrbit([]);
+    if (s) {
+      setAutoRotate(false);
+      setFocusTarget({ id: `__sat_${s.satid}`, lat: s.lat, lng: s.lng, label: s.satname });
+      // Fetch predicted orbit positions (90 minutes ≈ 1 full LEO orbit, 300 samples)
+      const controller = new AbortController();
+      satOrbitFetchRef.current = controller;
+      setSatelliteOrbitLoading(true);
+      const params = new URLSearchParams({
+        mode: "positions",
+        id: String(s.satid),
+        lat: "0",
+        lng: "0",
+        alt: "0",
+        seconds: "5400", // 90 minutes
+      });
+      fetch(`/api/satellites?${params}`, { signal: controller.signal })
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.positions) setSatelliteOrbit(data.positions);
+        })
+        .catch((err) => {
+          if ((err as Error).name !== "AbortError") console.error("Orbit fetch failed", err);
+        })
+        .finally(() => setSatelliteOrbitLoading(false));
+    }
+  }, []);
 
   const handleToggleFlights = useCallback(() => {
     setFlightsEnabled((p) => !p);
@@ -270,6 +388,16 @@ export default function Home() {
           flightRoute={flightRoute}
           flightRouteLoading={flightRouteLoading}
           flightRouteError={flightRouteError}
+          satellites={satellites}
+          satellitesLoading={satellitesLoading}
+          satellitesError={satellitesError}
+          satellitesEnabled={satellitesEnabled}
+          onToggleSatellites={handleToggleSatellites}
+          onRefreshSatellites={() => fetchSatellites()}
+          onSelectSatellite={handleSelectSatellite}
+          selectedSatId={selectedSatId}
+          satelliteCategory={satelliteCategory}
+          onSatelliteCategoryChange={handleSatelliteCategoryChange}
         />
         </div>
       </aside>
@@ -286,6 +414,9 @@ export default function Home() {
             flights={globeFlights}
             selectedFlightIcao={selectedFlightIcao}
             flightRoute={flightRoute}
+            satellites={satellites}
+            selectedSatId={selectedSatId}
+            satelliteOrbit={satelliteOrbit}
           />
         ) : (
           <MapboxFlightMap

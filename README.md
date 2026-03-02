@@ -22,6 +22,11 @@
 - **Flight Route Lookup** — select a commercial flight to automatically resolve its origin and destination airports using a multi-strategy pipeline (see [Flight Route Resolution](#flight-route-resolution) below). A raised green great-circle arc is drawn on the globe from departure to arrival, with colour-coded airport markers. A route info card in the sidebar shows airline, flight number, airports, cities, times, and flight status.
 - **Airport Database** — a bundled database of ~170 major airports worldwide (IATA code → lat/lng/city) powers the route arc rendering. Located at `public/data/airports.json`.
 - **Airline Identification** — flights are automatically tagged with their airline name (e.g. "United", "Lufthansa", "Emirates") via a comprehensive ICAO→IATA airline code mapping table that also provides readable airline names and IATA-format flight numbers.
+- **Live Satellite Tracking** — toggle the Satellite Tracker to stream real-time satellite positions from the N2YO API. Browse by category (ISS, Starlink, GPS, Weather, Amateur Radio, CubeSats, and 40+ more), filter by name or NORAD ID, and sort by altitude. Satellites are colour-coded by orbit type on the globe.
+- **Orbit-Type Colour Coding** — LEO satellites render in sky-blue, MEO in green, GEO in orange, and HEO in red, making it easy to distinguish orbit regimes at a glance.
+- **Orbital Path Rendering** — select any satellite to fetch a 90-minute predicted orbit from N2YO and render it as an amber tube tracing the full trajectory at the correct altitude, with interval dots showing time progression.
+- **Global Coverage** — satellite positions are fetched from two observer points 180° apart (each with a 90° search radius), ensuring seamless full-globe coverage with no gaps while minimising API calls.
+- **N2YO Rate-Limit Mitigation** — server-side in-memory caching (60 s TTL) prevents duplicate upstream requests, and the client polls every 2 minutes instead of continuously, keeping usage well within the free-tier limit of 300 transactions/hour.
 - **API Response Caching** — every Google Places lookup, photo, and geocoding result is cached in a local SQLite database. Repeat requests are served from the cache with zero external API calls (see [Local Database](#local-database)).
 - **Token Security** — API keys are never exposed in source code; Mapbox Directions requests are proxied through Next.js API routes so the secret key stays server-side.
 
@@ -53,6 +58,7 @@
 | Directions | Mapbox Directions API (server-side proxy) |
 | Flight Tracking | [OpenSky Network](https://opensky-network.org) REST API (server-side proxy, OAuth2) |
 | Flight Route Lookup | Multi-strategy: [SerpAPI](https://serpapi.com) Google Search → [FlightAware](https://www.flightaware.com) page parsing → organic result extraction (server-side, cached) |
+| Satellite Tracking | [N2YO](https://www.n2yo.com) REST API (server-side proxy) — real-time positions + predicted orbits |
 | Airport Database | Bundled JSON (~170 major airports, IATA → lat/lng) |
 | Local Database | [SQLite](https://sqlite.org) via [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) |
 
@@ -115,6 +121,7 @@ All keys live in `.env.local`, which is **never committed** (covered by `.gitign
 | `OPENSKY_CLIENT_ID` | Optional | OAuth2 client ID for authenticated OpenSky API access (higher rate limits). |
 | `OPENSKY_CLIENT_SECRET` | Optional | OAuth2 client secret for authenticated OpenSky API access. |
 | `SERPAPI_API_KEY` | Optional | API key for SerpAPI — used to look up flight origin/destination airports via Google Search. |
+| `N2YO_API_KEY` | Optional | API key for N2YO — used for live satellite tracking and orbital position predictions. |
 
 ### Where to get each key
 
@@ -123,8 +130,9 @@ All keys live in `.env.local`, which is **never committed** (covered by `.gitign
 - **MapQuest API key** → [developer.mapquest.com](https://developer.mapquest.com/) — free tier available.
 - **OpenSky Network credentials** → [opensky-network.org](https://opensky-network.org/). Register for a free account, then create OAuth2 client credentials under your profile. Without credentials the API still works (anonymous access) but with stricter rate limits (≈ 100 requests/day vs. 4000 authenticated).
 - **SerpAPI key** → [serpapi.com](https://serpapi.com/). Sign up and copy your API key from the dashboard. The free tier includes 100 searches/month. Flight route lookups are cached in-memory for 6 hours, so repeated selections of the same flight cost no additional searches.
+- **N2YO API key** → [n2yo.com](https://www.n2yo.com/api/). Create a free account and copy your API key from the profile page. The free tier allows 300 transactions/hour. Qterra's built-in caching and 2-minute polling interval keep usage well under this limit (worst case ~60 calls/hour).
 
-> **Note:** The app works without Google/MapQuest keys (geocoding simply returns no results). The route overlay requires both Mapbox tokens. The flight tracker works without OpenSky credentials (anonymous mode) but may hit rate limits with heavy use. Without a SerpAPI key, flight route lookup still works via the FlightAware fallback strategy — SerpAPI simply provides an additional (often richer) data source.
+> **Note:** The app works without Google/MapQuest keys (geocoding simply returns no results). The route overlay requires both Mapbox tokens. The flight tracker works without OpenSky credentials (anonymous mode) but may hit rate limits with heavy use. Without a SerpAPI key, flight route lookup still works via the FlightAware fallback strategy — SerpAPI simply provides an additional (often richer) data source. The satellite tracker requires an N2YO API key to function.
 
 ---
 
@@ -140,6 +148,8 @@ All keys live in `.env.local`, which is **never committed** (covered by `.gitign
 8. **Track live flights** — toggle the Flight Tracker switch in the sidebar. Aircraft positions are fetched from the OpenSky Network every 15 seconds. Use the country chips or the search box to filter flights, then click a flight to zoom the globe to its location. A projected trajectory arc shows the flight's estimated path over the next ~20 minutes.
 9. **View flight route** — when you select a commercial flight (e.g. DAL1950, AAL1600, UA2005), the app automatically resolves its origin and destination airports using a multi-strategy pipeline: SerpAPI structured data → organic search result parsing → FlightAware page fetch. A green great-circle arc is drawn on the globe from departure to arrival, green and red markers indicate the airports, and a route info card appears in the sidebar showing airline, flight number, status, airport codes, cities, and times. Results are cached for 6 hours. ICAO callsigns are automatically converted to IATA format for display (e.g. DAL1950 → DL 1950).
 10. **Control the globe** — use the Pause / Rotate button and the Speed slider to control auto-rotation. Click and drag the globe to manually orbit.
+11. **Track live satellites** — switch to the Satellites tab and toggle the tracker on. Choose a category (e.g. Starlink, ISS, GPS, Weather) from the dropdown. Satellites appear on the globe colour-coded by orbit type: sky-blue for LEO, green for MEO, orange for GEO, and red for HEO. Use the search box to filter by name or NORAD ID.
+12. **View satellite orbit** — click any satellite in the list to zoom the camera to its position and fetch a 90-minute predicted orbit path. The orbit renders as an amber tube at the correct altitude with interval dots showing time progression. Click the satellite again (or select a different one) to dismiss the orbit.
 
 ---
 
@@ -158,13 +168,15 @@ src/
 │       ├── directions/route.ts # Server-side Mapbox Directions proxy
 │       ├── flights/route.ts    # OpenSky Network flight data proxy (OAuth2)
 │       ├── flights/route/route.ts # Multi-strategy flight route resolver (cached)
+│       ├── satellites/route.ts # N2YO satellite data proxy (above + positions)
 │       └── places/
 │           ├── route.ts        # Google Nearby + Place Details proxy
 │           └── photo/route.ts  # Google Places photo proxy
 ├── components/
 │   ├── Globe.tsx               # Three.js / three-globe canvas component
-│   ├── CoordinatePanel.tsx     # Sidebar: search, pin list, route controls, presets, flights
+│   ├── CoordinatePanel.tsx     # Sidebar: search, pin list, route controls, presets, flights, satellites
 │   ├── FlightsPanel.tsx        # Flight tracker: list, filters, airline badges, route info card
+│   ├── SatellitesPanel.tsx     # Satellite tracker: category selector, list, orbit-type badges
 │   ├── PointDetailPane.tsx     # Overlay pane: place info, Street View, save to presets
 │   └── MapboxRouteMap.tsx      # Mapbox GL overlay with route + congestion
 └── lib/
