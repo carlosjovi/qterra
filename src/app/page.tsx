@@ -12,11 +12,15 @@ const Globe = dynamic(() => import("@/components/Globe"), { ssr: false });
 
 // Mapbox uses the DOM heavily – no SSR
 const MapboxRouteMap = dynamic(() => import("@/components/MapboxRouteMap"), { ssr: false });
+const MapboxFlightMap = dynamic(() => import("@/components/MapboxFlightMap"), { ssr: false });
+
+type ViewMode = "globe" | "map";
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN ?? "";
 const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
 
 export default function Home() {
+  const [viewMode, setViewMode] = useState<ViewMode>("globe");
   const [coordinates, setCoordinates] = useState<Coordinate[]>([]);
   const [autoRotate, setAutoRotate] = useState(true);
   const [rotationSpeed, setRotationSpeed] = useState(1);
@@ -262,18 +266,29 @@ export default function Home() {
         </div>
       </aside>
 
-      {/* globe viewport */}
+      {/* viewport */}
       <div className="flex-1 relative overflow-hidden">
-        <Globe
-          coordinates={coordinates}
-          autoRotate={autoRotate}
-          rotationSpeed={rotationSpeed}
-          focusTarget={focusTarget}
-          showGrid={showGrid}
-          flights={globeFlights}
-          selectedFlightIcao={selectedFlightIcao}
-          flightRoute={flightRoute}
-        />
+        {viewMode === "globe" ? (
+          <Globe
+            coordinates={coordinates}
+            autoRotate={autoRotate}
+            rotationSpeed={rotationSpeed}
+            focusTarget={focusTarget}
+            showGrid={showGrid}
+            flights={globeFlights}
+            selectedFlightIcao={selectedFlightIcao}
+            flightRoute={flightRoute}
+          />
+        ) : (
+          <MapboxFlightMap
+            mapboxToken={MAPBOX_TOKEN}
+            coordinates={coordinates}
+            flights={globeFlights}
+            selectedFlightIcao={selectedFlightIcao}
+            flightRoute={flightRoute}
+            onSelectFlight={handleSelectFlight}
+          />
+        )}
 
         {/* Mapbox street-level route overlay */}
         {showRouteMap && (
@@ -285,6 +300,30 @@ export default function Home() {
             onClose={handleCloseRoute}
           />
         )}
+
+        {/* View toggle buttons */}
+        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[9999] flex rounded-lg overflow-hidden border border-white/15 backdrop-blur-md bg-black/40 shadow-lg">
+          <button
+            onClick={() => setViewMode("globe")}
+            className={`px-4 py-2 text-sm font-medium transition-colors ${
+              viewMode === "globe"
+                ? "bg-amber-600/80 text-white"
+                : "text-white/70 hover:bg-white/10 hover:text-white"
+            }`}
+          >
+            3D Globe
+          </button>
+          <button
+            onClick={() => setViewMode("map")}
+            className={`px-4 py-2 text-sm font-medium transition-colors ${
+              viewMode === "map"
+                ? "bg-amber-600/80 text-white"
+                : "text-white/70 hover:bg-white/10 hover:text-white"
+            }`}
+          >
+            Map
+          </button>
+        </div>
 
         {/* point detail pane — overlaid so it doesn't shift the globe container */}
         {selectedPoint && (
