@@ -104,7 +104,7 @@ export default function Home() {
   }, [selectedFlightIcao]);
 
   // Fetch flight route from SerpAPI when a flight is selected
-  const fetchFlightRoute = useCallback(async (callsign: string) => {
+  const fetchFlightRoute = useCallback(async (callsign: string, acLat?: number, acLng?: number, acHeading?: number) => {
     // Abort any in-flight request
     routeFetchRef.current?.abort();
     const controller = new AbortController();
@@ -115,7 +115,15 @@ export default function Home() {
     setFlightRoute(null);
 
     try {
-      const res = await fetch(`/api/flights/route?callsign=${encodeURIComponent(callsign)}`, {
+      const params = new URLSearchParams({ callsign });
+      if (acLat != null && acLng != null) {
+        params.set("lat", String(acLat));
+        params.set("lng", String(acLng));
+      }
+      if (acHeading != null) {
+        params.set("heading", String(acHeading));
+      }
+      const res = await fetch(`/api/flights/route?${params}`, {
         signal: controller.signal,
       });
       const data = await res.json();
@@ -157,7 +165,7 @@ export default function Home() {
       // Look up route info if the callsign looks like a flight
       // Matches AAL1234, DL1234, B61234, N12345 etc. – 2-3 letter prefix + digits
       if (f.callsign && /^[A-Z]{2,3}\d+/i.test(f.callsign.trim())) {
-        fetchFlightRoute(f.callsign.trim());
+        fetchFlightRoute(f.callsign.trim(), f.lat, f.lng, f.heading);
       } else {
         setFlightRoute(null);
         setFlightRouteError(null);

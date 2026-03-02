@@ -331,6 +331,161 @@ async function fetchFlightAwarePage(
   }
 }
 
+// ── Geo-validation helpers ──
+
+const DEG2RAD = Math.PI / 180;
+const RAD2DEG = 180 / Math.PI;
+const EARTH_R_KM = 6371;
+
+/** Haversine distance in km between two lat/lng points */
+function haversineKm(
+  lat1: number, lng1: number,
+  lat2: number, lng2: number,
+): number {
+  const dLat = (lat2 - lat1) * DEG2RAD;
+  const dLng = (lng2 - lng1) * DEG2RAD;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * DEG2RAD) * Math.cos(lat2 * DEG2RAD) * Math.sin(dLng / 2) ** 2;
+  return EARTH_R_KM * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+/**
+ * Cross-track distance: how far a point (lat3,lng3) is from the great-circle
+ * path defined by (lat1,lng1)→(lat2,lng2).
+ * Returns the **absolute** cross-track distance in km.
+ * See: https://www.movable-type.co.uk/scripts/latlong.html#crossTrack
+ */
+function crossTrackDistKm(
+  lat1: number, lng1: number,
+  lat2: number, lng2: number,
+  lat3: number, lng3: number,
+): number {
+  const d13 = haversineKm(lat1, lng1, lat3, lng3) / EARTH_R_KM; // angular dist start→point
+  const theta13 = bearingRad(lat1, lng1, lat3, lng3);
+  const theta12 = bearingRad(lat1, lng1, lat2, lng2);
+  const dxt = Math.asin(Math.sin(d13) * Math.sin(theta13 - theta12));
+  return Math.abs(dxt * EARTH_R_KM);
+}
+
+/** Along-track distance: how far along the great-circle (lat1→lat2) the
+ *  closest point to (lat3,lng3) lies. If negative or > route length,
+ *  the aircraft is "before" or "past" the route. Returns km. */
+function alongTrackDistKm(
+  lat1: number, lng1: number,
+  lat2: number, lng2: number,
+  lat3: number, lng3: number,
+): number {
+  const d13 = haversineKm(lat1, lng1, lat3, lng3) / EARTH_R_KM;
+  const dxt = crossTrackDistKm(lat1, lng1, lat2, lng2, lat3, lng3) / EARTH_R_KM;
+  const dat = Math.acos(Math.cos(d13) / Math.cos(dxt));
+  return dat * EARTH_R_KM;
+}
+
+/** Bearing in radians from (lat1,lng1) to (lat2,lng2) */
+function bearingRad(
+  lat1: number, lng1: number,
+  lat2: number, lng2: number,
+): number {
+  const φ1 = lat1 * DEG2RAD;
+  const φ2 = lat2 * DEG2RAD;
+  const Δλ = (lng2 - lng1) * DEG2RAD;
+  const y = Math.sin(Δλ) * Math.cos(φ2);
+  const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+  return Math.atan2(y, x);
+}
+
+/** Bearing in degrees (0–360) from (lat1,lng1) to (lat2,lng2) */
+function bearingDeg(
+  lat1: number, lng1: number,
+  lat2: number, lng2: number,
+): number {
+  return (bearingRad(lat1, lng1, lat2, lng2) * RAD2DEG + 360) % 360;
+}
+
+/** Smallest angular difference between two headings in degrees (0–180) */
+function headingDiff(a: number, b: number): number {
+  let d = Math.abs(a - b) % 360;
+  if (d > 180) d = 360 - d;
+  return d;
+}
+
+interface ValidationResult {
+  valid: boolean;
+  reason?: string;
+  crossTrackKm?: number;
+  routeDistKm?: number;
+}
+
+/**
+ * Validate that an aircraft's current position/heading is plausible for a
+ * given route.  Rejects routes where:
+ *   1. Cross-track distance exceeds a generous corridor
+ *      (max of 350 km or 25 % of route length)
+ *   2. Aircraft heading differs from expected bearing by > 90°
+ *      (only checked when heading is provided and aircraft is mid-route)
+ */
+function validateRoutePosition(
+  depLat: number, depLng: number,
+  arrLat: number, arrLng: number,
+  acLat: number, acLng: number,
+  acHeading?: number,
+): ValidationResult {
+  const routeDistKm = haversineKm(depLat, depLng, arrLat, arrLng);
+
+  // For very short routes (< 80 km / ~43 nm) skip validation —
+  // positional jitter matters more
+  if (routeDistKm < 80) return { valid: true, routeDistKm };
+
+  const xtk = crossTrackDistKm(depLat, depLng, arrLat, arrLng, acLat, acLng);
+  const corridor = Math.max(350, routeDistKm * 0.25);
+
+  if (xtk > corridor) {
+    return {
+      valid: false,
+      reason: `Aircraft is ${Math.round(xtk)} km off-route (corridor: ${Math.round(corridor)} km)`,
+      crossTrackKm: xtk,
+      routeDistKm,
+    };
+  }
+
+  // Along-track check: reject if aircraft is far behind departure or past arrival
+  const atk = alongTrackDistKm(depLat, depLng, arrLat, arrLng, acLat, acLng);
+  const margin = Math.max(200, routeDistKm * 0.15);
+  if (atk < -margin || atk > routeDistKm + margin) {
+    return {
+      valid: false,
+      reason: `Aircraft along-track position (${Math.round(atk)} km) is outside route span (0–${Math.round(routeDistKm)} km)`,
+      crossTrackKm: xtk,
+      routeDistKm,
+    };
+  }
+
+  // Heading consistency (optional)
+  if (acHeading != null && isFinite(acHeading)) {
+    // Expected bearing from current position toward arrival
+    const expectedBearing = bearingDeg(acLat, acLng, arrLat, arrLng);
+    const diff = headingDiff(acHeading, expectedBearing);
+    // Also check bearing from current position toward departure (aircraft might
+    // be heading back / returning)
+    const bearingToDep = bearingDeg(acLat, acLng, depLat, depLng);
+    const diffToDep = headingDiff(acHeading, bearingToDep);
+    const minDiff = Math.min(diff, diffToDep);
+
+    // Allow up to 90° — accounts for wind correction, holds, manoeuvring
+    if (minDiff > 90) {
+      return {
+        valid: false,
+        reason: `Aircraft heading ${Math.round(acHeading)}° differs from expected bearing by ${Math.round(minDiff)}°`,
+        crossTrackKm: xtk,
+        routeDistKm,
+      };
+    }
+  }
+
+  return { valid: true, crossTrackKm: xtk, routeDistKm };
+}
+
 // ── Assemble route from parts ──
 
 function buildRoute(
@@ -381,12 +536,37 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  // Optional aircraft position / heading for route-plausibility validation
+  const acLatStr = req.nextUrl.searchParams.get("lat");
+  const acLngStr = req.nextUrl.searchParams.get("lng");
+  const acHdgStr = req.nextUrl.searchParams.get("heading");
+  const acLat = acLatStr ? parseFloat(acLatStr) : undefined;
+  const acLng = acLngStr ? parseFloat(acLngStr) : undefined;
+  const acHeading = acHdgStr ? parseFloat(acHdgStr) : undefined;
+  const hasPosition = acLat != null && acLng != null && isFinite(acLat) && isFinite(acLng);
+
   const cacheKey = callsign.replace(/\s+/g, "").toUpperCase();
 
-  // Check cache
+  // Check cache — but still validate against the aircraft's current position
   const cached = cache.get(cacheKey);
   if (cached && Date.now() < cached.expiresAt) {
-    return NextResponse.json({ route: { ...cached.route, cached: true } });
+    if (hasPosition) {
+      const v = validateRoutePosition(
+        cached.route.departureLat, cached.route.departureLng,
+        cached.route.arrivalLat, cached.route.arrivalLng,
+        acLat!, acLng!, acHeading,
+      );
+      if (!v.valid) {
+        console.log(`[RouteValidation] Cached route ${cacheKey} rejected: ${v.reason}`);
+        // Don't serve this cached route — it doesn't match the aircraft position.
+        // Clear it so we re-resolve (the flight may have changed routes).
+        cache.delete(cacheKey);
+      } else {
+        return NextResponse.json({ route: { ...cached.route, cached: true } });
+      }
+    } else {
+      return NextResponse.json({ route: { ...cached.route, cached: true } });
+    }
   }
 
   const airports = await getAirportDb();
@@ -416,16 +596,45 @@ export async function GET(req: NextRequest) {
         const structured = parseSerpApiStructured(data);
         if (structured.departureCode && structured.arrivalCode) {
           const route = buildRoute(callsign, structured.departureCode, structured.arrivalCode, airports, structured);
-          cache.set(cacheKey, { route, expiresAt: Date.now() + CACHE_TTL_MS });
-          return NextResponse.json({ route });
+          if (hasPosition) {
+            const v = validateRoutePosition(
+              route.departureLat, route.departureLng,
+              route.arrivalLat, route.arrivalLng,
+              acLat!, acLng!, acHeading,
+            );
+            if (!v.valid) {
+              console.log(`[RouteValidation] SerpAPI structured route ${cacheKey} (${structured.departureCode}→${structured.arrivalCode}) rejected: ${v.reason}`);
+              // Don't cache or return this route — try next strategy
+            } else {
+              cache.set(cacheKey, { route, expiresAt: Date.now() + CACHE_TTL_MS });
+              return NextResponse.json({ route });
+            }
+          } else {
+            cache.set(cacheKey, { route, expiresAt: Date.now() + CACHE_TTL_MS });
+            return NextResponse.json({ route });
+          }
         }
 
         // Try organic results parsing
         const organic = parseOrganicResults(data, airports);
         if (organic.departureCode && organic.arrivalCode) {
           const route = buildRoute(callsign, organic.departureCode, organic.arrivalCode, airports);
-          cache.set(cacheKey, { route, expiresAt: Date.now() + CACHE_TTL_MS });
-          return NextResponse.json({ route });
+          if (hasPosition) {
+            const v = validateRoutePosition(
+              route.departureLat, route.departureLng,
+              route.arrivalLat, route.arrivalLng,
+              acLat!, acLng!, acHeading,
+            );
+            if (!v.valid) {
+              console.log(`[RouteValidation] SerpAPI organic route ${cacheKey} (${organic.departureCode}→${organic.arrivalCode}) rejected: ${v.reason}`);
+            } else {
+              cache.set(cacheKey, { route, expiresAt: Date.now() + CACHE_TTL_MS });
+              return NextResponse.json({ route });
+            }
+          } else {
+            cache.set(cacheKey, { route, expiresAt: Date.now() + CACHE_TTL_MS });
+            return NextResponse.json({ route });
+          }
         }
       } catch (err) {
         console.log(`[SerpAPI] Error for query "${query}":`, err instanceof Error ? err.message : err);
@@ -443,8 +652,22 @@ export async function GET(req: NextRequest) {
       const route = buildRoute(callsign, faResult.departureCode, faResult.arrivalCode, airports, {
         status: faResult.status,
       });
-      cache.set(cacheKey, { route, expiresAt: Date.now() + CACHE_TTL_MS });
-      return NextResponse.json({ route });
+      if (hasPosition) {
+        const v = validateRoutePosition(
+          route.departureLat, route.departureLng,
+          route.arrivalLat, route.arrivalLng,
+          acLat!, acLng!, acHeading,
+        );
+        if (!v.valid) {
+          console.log(`[RouteValidation] FlightAware route ${cacheKey} (${faResult.departureCode}→${faResult.arrivalCode}) rejected: ${v.reason}`);
+        } else {
+          cache.set(cacheKey, { route, expiresAt: Date.now() + CACHE_TTL_MS });
+          return NextResponse.json({ route });
+        }
+      } else {
+        cache.set(cacheKey, { route, expiresAt: Date.now() + CACHE_TTL_MS });
+        return NextResponse.json({ route });
+      }
     }
   } catch (err) {
     console.log("[FlightAware] Strategy failed:", err instanceof Error ? err.message : err);
