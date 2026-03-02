@@ -530,6 +530,9 @@ export default function Home() {
             selectedFlightIcao={selectedFlightIcao}
             flightRoute={flightRoute}
             onSelectFlight={handleSelectFlight}
+            webcams={webcams}
+            selectedWebcamId={selectedWebcamId}
+            onSelectWebcam={handleSelectWebcam}
           />
         )}
 

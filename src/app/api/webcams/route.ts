@@ -87,7 +87,8 @@ export async function GET(req: NextRequest) {
         "",
       playerUrl: w.player?.day ?? w.player?.lifetime ?? w.player?.live ?? "",
       country: w.location?.country ?? "",
-      city: w.location?.city ?? w.location?.region ?? "",
+      region: w.location?.region ?? "",
+      city: w.location?.city ?? "",
       status: w.status ?? "unknown",
       lastUpdated: w.lastUpdatedOn
         ? Math.floor(new Date(w.lastUpdatedOn).getTime() / 1000)

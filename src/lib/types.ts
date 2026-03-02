@@ -142,6 +142,8 @@ export interface Webcam {
   playerUrl: string;
   /** Two-letter country code */
   country: string;
+  /** Region / state string */
+  region: string;
   /** City / region string */
   city: string;
   /** "active" | "inactive" */

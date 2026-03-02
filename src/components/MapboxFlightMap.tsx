@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useCallback, useState } from "react";
 import mapboxgl from "mapbox-gl";
-import type { Flight, FlightRoute, Coordinate } from "@/lib/types";
+import type { Flight, FlightRoute, Coordinate, Webcam } from "@/lib/types";
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -84,6 +84,9 @@ interface Props {
   selectedFlightIcao?: string | null;
   flightRoute?: FlightRoute | null;
   onSelectFlight?: (f: Flight | null) => void;
+  webcams?: Webcam[];
+  selectedWebcamId?: string | null;
+  onSelectWebcam?: (w: Webcam | null) => void;
 }
 
 /* ------------------------------------------------------------------ */
@@ -169,12 +172,16 @@ export default function MapboxFlightMap({
   selectedFlightIcao = null,
   flightRoute = null,
   onSelectFlight,
+  webcams = [],
+  selectedWebcamId = null,
+  onSelectWebcam,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const markersRef = useRef<mapboxgl.Marker[]>([]);
   const flightMarkersRef = useRef<Map<string, mapboxgl.Marker>>(new Map());
   const routeMarkersRef = useRef<mapboxgl.Marker[]>([]);
+  const webcamMarkersRef = useRef<Map<string, mapboxgl.Marker>>(new Map());
   const [mapLoaded, setMapLoaded] = useState(false);
   const [mapStyle, setMapStyle] = useState<MapStyle>("dark");
   const [terrain3d, setTerrain3d] = useState(false);
@@ -223,6 +230,7 @@ export default function MapboxFlightMap({
       markersRef.current = [];
       flightMarkersRef.current.clear();
       routeMarkersRef.current = [];
+      webcamMarkersRef.current.clear();
     };
   }, [mapboxToken]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -625,6 +633,107 @@ export default function MapboxFlightMap({
     );
     map.fitBounds(bounds, { padding: 80, maxZoom: 8 });
   }, [flightRoute, mapLoaded]);
+
+  /* ---- webcam markers ---- */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoaded) return;
+
+    const prevMarkers = webcamMarkersRef.current;
+    const nextKeys = new Set<string>();
+
+    for (const w of webcams) {
+      nextKeys.add(w.id);
+      const isSelected = w.id === selectedWebcamId;
+
+      let marker = prevMarkers.get(w.id);
+      if (marker) {
+        // Update position & selected styling
+        marker.setLngLat([w.lng, w.lat]);
+        const el = marker.getElement();
+        const dot = el.querySelector(".webcam-dot") as HTMLElement | null;
+        if (dot) {
+          dot.style.background = isSelected ? "#fbbf24" : "#a855f7";
+          dot.style.width = isSelected ? "14px" : "10px";
+          dot.style.height = isSelected ? "14px" : "10px";
+          dot.style.boxShadow = isSelected
+            ? "0 0 10px rgba(251,191,36,0.8), 0 0 20px rgba(251,191,36,0.4)"
+            : "0 0 6px rgba(168,85,247,0.6)";
+          dot.style.border = isSelected ? "2px solid #fff" : "2px solid rgba(255,255,255,0.7)";
+        }
+      } else {
+        // Create new webcam marker
+        const el = document.createElement("div");
+        el.style.cursor = "pointer";
+        el.style.zIndex = "5";
+
+        const dot = document.createElement("div");
+        dot.className = "webcam-dot";
+        dot.style.width = isSelected ? "14px" : "10px";
+        dot.style.height = isSelected ? "14px" : "10px";
+        dot.style.borderRadius = "50%";
+        dot.style.background = isSelected ? "#fbbf24" : "#a855f7";
+        dot.style.border = isSelected ? "2px solid #fff" : "2px solid rgba(255,255,255,0.7)";
+        dot.style.boxShadow = isSelected
+          ? "0 0 10px rgba(251,191,36,0.8), 0 0 20px rgba(251,191,36,0.4)"
+          : "0 0 6px rgba(168,85,247,0.6)";
+        dot.style.transition = "all 0.2s ease";
+        el.appendChild(dot);
+
+        el.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (onSelectWebcam) {
+            if (selectedWebcamId === w.id) {
+              onSelectWebcam(null);
+            } else {
+              onSelectWebcam(w);
+            }
+          }
+        });
+
+        marker = new mapboxgl.Marker({ element: el, anchor: "center" })
+          .setLngLat([w.lng, w.lat])
+          .setPopup(
+            new mapboxgl.Popup({ offset: 12, closeButton: false, closeOnClick: false })
+              .setHTML(`<div style="font-size:12px;"><strong>${w.title}</strong><br/><span style="color:#999;">${w.city || w.region || w.country}</span></div>`),
+          )
+          .addTo(map);
+
+        // Show popup on hover
+        const m = marker;
+        el.addEventListener("mouseenter", () => m.togglePopup());
+        el.addEventListener("mouseleave", () => {
+          const popup = m.getPopup();
+          if (popup && popup.isOpen()) m.togglePopup();
+        });
+
+        prevMarkers.set(w.id, marker);
+      }
+    }
+
+    // Remove stale webcam markers
+    for (const [key, marker] of prevMarkers) {
+      if (!nextKeys.has(key)) {
+        marker.remove();
+        prevMarkers.delete(key);
+      }
+    }
+  }, [webcams, selectedWebcamId, mapLoaded, onSelectWebcam]);
+
+  /* ---- fly to selected webcam ---- */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoaded || !selectedWebcamId) return;
+
+    const webcam = webcams.find((w) => w.id === selectedWebcamId);
+    if (!webcam) return;
+
+    map.flyTo({
+      center: [webcam.lng, webcam.lat],
+      zoom: Math.max(map.getZoom(), 8),
+      duration: 1200,
+    });
+  }, [selectedWebcamId, mapLoaded]); // intentionally not depending on webcams to avoid constant re-centering
 
   /* ---- fly to selected flight ---- */
   useEffect(() => {

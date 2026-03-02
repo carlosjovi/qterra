@@ -13,6 +13,7 @@ import {
   TextField,
   Switch,
   Separator,
+  Select,
 } from "@radix-ui/themes";
 import {
   MagnifyingGlassIcon,
@@ -55,17 +56,58 @@ export default function WebcamsPanel({
   selectedWebcamId: string | null;
 }) {
   const [search, setSearch] = useState("");
+  const [filterCountry, setFilterCountry] = useState("__all__");
+  const [filterRegion, setFilterRegion] = useState("__all__");
+  const [filterCity, setFilterCity] = useState("__all__");
+
+  /* Build unique sorted option lists, cascading based on current filters */
+  const countries = useMemo(() => {
+    const set = new Set(webcams.map((w) => w.country).filter(Boolean));
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [webcams]);
+
+  const regions = useMemo(() => {
+    let pool = webcams;
+    if (filterCountry !== "__all__") pool = pool.filter((w) => w.country === filterCountry);
+    const set = new Set(pool.map((w) => w.region).filter(Boolean));
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [webcams, filterCountry]);
+
+  const cities = useMemo(() => {
+    let pool = webcams;
+    if (filterCountry !== "__all__") pool = pool.filter((w) => w.country === filterCountry);
+    if (filterRegion !== "__all__") pool = pool.filter((w) => w.region === filterRegion);
+    const set = new Set(pool.map((w) => w.city).filter(Boolean));
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [webcams, filterCountry, filterRegion]);
+
+  /* Reset child filters when parent changes */
+  const handleCountryChange = (v: string) => {
+    setFilterCountry(v);
+    setFilterRegion("__all__");
+    setFilterCity("__all__");
+  };
+  const handleRegionChange = (v: string) => {
+    setFilterRegion(v);
+    setFilterCity("__all__");
+  };
 
   const filtered = useMemo(() => {
-    if (!search.trim()) return webcams;
-    const q = search.toLowerCase();
-    return webcams.filter(
-      (w) =>
-        w.title.toLowerCase().includes(q) ||
-        w.city.toLowerCase().includes(q) ||
-        w.country.toLowerCase().includes(q)
-    );
-  }, [webcams, search]);
+    let result = webcams;
+    if (filterCountry !== "__all__") result = result.filter((w) => w.country === filterCountry);
+    if (filterRegion !== "__all__") result = result.filter((w) => w.region === filterRegion);
+    if (filterCity !== "__all__") result = result.filter((w) => w.city === filterCity);
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      result = result.filter(
+        (w) =>
+          w.title.toLowerCase().includes(q) ||
+          w.city.toLowerCase().includes(q) ||
+          w.country.toLowerCase().includes(q)
+      );
+    }
+    return result;
+  }, [webcams, search, filterCountry, filterRegion, filterCity]);
 
   return (
     <Box>
@@ -152,6 +194,60 @@ export default function WebcamsPanel({
                 </TextField.Slot>
               )}
             </TextField.Root>
+          </Box>
+
+          {/* Filter dropdowns */}
+          <Box px="4" pb="2">
+            <Flex direction="column" gap="1">
+              {countries.length > 1 && (
+                <Select.Root size="1" value={filterCountry} onValueChange={handleCountryChange}>
+                  <Select.Trigger
+                    variant="surface"
+                    placeholder="All countries"
+                    style={{ width: "100%" }}
+                  />
+                  <Select.Content position="popper" sideOffset={4}>
+                    <Select.Item value="__all__">All countries</Select.Item>
+                    <Select.Separator />
+                    {countries.map((c) => (
+                      <Select.Item key={c} value={c}>{c}</Select.Item>
+                    ))}
+                  </Select.Content>
+                </Select.Root>
+              )}
+              {regions.length > 1 && (
+                <Select.Root size="1" value={filterRegion} onValueChange={handleRegionChange}>
+                  <Select.Trigger
+                    variant="surface"
+                    placeholder="All states / regions"
+                    style={{ width: "100%" }}
+                  />
+                  <Select.Content position="popper" sideOffset={4}>
+                    <Select.Item value="__all__">All states / regions</Select.Item>
+                    <Select.Separator />
+                    {regions.map((r) => (
+                      <Select.Item key={r} value={r}>{r}</Select.Item>
+                    ))}
+                  </Select.Content>
+                </Select.Root>
+              )}
+              {cities.length > 1 && (
+                <Select.Root size="1" value={filterCity} onValueChange={setFilterCity}>
+                  <Select.Trigger
+                    variant="surface"
+                    placeholder="All cities"
+                    style={{ width: "100%" }}
+                  />
+                  <Select.Content position="popper" sideOffset={4}>
+                    <Select.Item value="__all__">All cities</Select.Item>
+                    <Select.Separator />
+                    {cities.map((c) => (
+                      <Select.Item key={c} value={c}>{c}</Select.Item>
+                    ))}
+                  </Select.Content>
+                </Select.Root>
+              )}
+            </Flex>
           </Box>
 
           {filtered.length === 0 && (
