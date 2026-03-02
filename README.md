@@ -27,6 +27,7 @@
 - **Orbital Path Rendering** — select any satellite to fetch a 90-minute predicted orbit from N2YO and render it as an amber tube tracing the full trajectory at the correct altitude, with interval dots showing time progression.
 - **Global Coverage** — satellite positions are fetched from two observer points 180° apart (each with a 90° search radius), ensuring seamless full-globe coverage with no gaps while minimising API calls.
 - **N2YO Rate-Limit Mitigation** — server-side in-memory caching (60 s TTL) prevents duplicate upstream requests, and the client polls every 2 minutes instead of continuously, keeping usage well within the free-tier limit of 300 transactions/hour.
+- **Live Webcams** — toggle the Live Cams feature to load webcams from 15 major cities worldwide via the Windy Webcams API. Green pins appear on the globe at each webcam location. Click any webcam in the sidebar (with thumbnail preview, city, and live/offline status) to fly the camera to its position and open an embedded video player overlay.
 - **API Response Caching** — every Google Places lookup, photo, and geocoding result is cached in a local SQLite database. Repeat requests are served from the cache with zero external API calls (see [Local Database](#local-database)).
 - **Token Security** — API keys are never exposed in source code; Mapbox Directions requests are proxied through Next.js API routes so the secret key stays server-side.
 
@@ -59,6 +60,7 @@
 | Flight Tracking | [OpenSky Network](https://opensky-network.org) REST API (server-side proxy, OAuth2) |
 | Flight Route Lookup | Multi-strategy: [SerpAPI](https://serpapi.com) Google Search → [FlightAware](https://www.flightaware.com) page parsing → organic result extraction (server-side, cached) |
 | Satellite Tracking | [N2YO](https://www.n2yo.com) REST API (server-side proxy) — real-time positions + predicted orbits |
+| Live Webcams | [Windy Webcams API v3](https://api.windy.com/webcams) (server-side proxy) — 70,000+ geolocated webcams with embeddable players |
 | Airport Database | Bundled JSON (~170 major airports, IATA → lat/lng) |
 | Local Database | [SQLite](https://sqlite.org) via [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) |
 
@@ -122,6 +124,7 @@ All keys live in `.env.local`, which is **never committed** (covered by `.gitign
 | `OPENSKY_CLIENT_SECRET` | Optional | OAuth2 client secret for authenticated OpenSky API access. |
 | `SERPAPI_API_KEY` | Optional | API key for SerpAPI — used to look up flight origin/destination airports via Google Search. |
 | `N2YO_API_KEY` | Optional | API key for N2YO — used for live satellite tracking and orbital position predictions. |
+| `WINDY_WEBCAMS_API_KEY` | Optional | API key for Windy Webcams — used to load live webcam feeds from around the world with map pins and embedded video players. |
 
 ### Where to get each key
 
@@ -131,8 +134,9 @@ All keys live in `.env.local`, which is **never committed** (covered by `.gitign
 - **OpenSky Network credentials** → [opensky-network.org](https://opensky-network.org/). Register for a free account, then create OAuth2 client credentials under your profile. Without credentials the API still works (anonymous access) but with stricter rate limits (≈ 100 requests/day vs. 4000 authenticated).
 - **SerpAPI key** → [serpapi.com](https://serpapi.com/). Sign up and copy your API key from the dashboard. The free tier includes 100 searches/month. Flight route lookups are cached in-memory for 6 hours, so repeated selections of the same flight cost no additional searches.
 - **N2YO API key** → [n2yo.com](https://www.n2yo.com/api/). Create a free account and copy your API key from the profile page. The free tier allows 300 transactions/hour. Qterra's built-in caching and 2-minute polling interval keep usage well under this limit (worst case ~60 calls/hour).
+- **Windy Webcams API key** → [api.windy.com/webcams](https://api.windy.com/webcams). Sign up for a free account and create an API key. Use `http://localhost:3000` as the project URL during local development. The free tier provides generous rate limits for development and moderate production use.
 
-> **Note:** The app works without Google/MapQuest keys (geocoding simply returns no results). The route overlay requires both Mapbox tokens. The flight tracker works without OpenSky credentials (anonymous mode) but may hit rate limits with heavy use. Without a SerpAPI key, flight route lookup still works via the FlightAware fallback strategy — SerpAPI simply provides an additional (often richer) data source. The satellite tracker requires an N2YO API key to function.
+> **Note:** The app works without Google/MapQuest keys (geocoding simply returns no results). The route overlay requires both Mapbox tokens. The flight tracker works without OpenSky credentials (anonymous mode) but may hit rate limits with heavy use. Without a SerpAPI key, flight route lookup still works via the FlightAware fallback strategy — SerpAPI simply provides an additional (often richer) data source. The satellite tracker requires an N2YO API key to function. The live webcams feature requires a Windy Webcams API key.
 
 ---
 
@@ -150,6 +154,7 @@ All keys live in `.env.local`, which is **never committed** (covered by `.gitign
 10. **Control the globe** — use the Pause / Rotate button and the Speed slider to control auto-rotation. Click and drag the globe to manually orbit.
 11. **Track live satellites** — switch to the Satellites tab and toggle the tracker on. Choose a category (e.g. Starlink, ISS, GPS, Weather) from the dropdown. Satellites appear on the globe colour-coded by orbit type: sky-blue for LEO, green for MEO, orange for GEO, and red for HEO. Use the search box to filter by name or NORAD ID.
 12. **View satellite orbit** — click any satellite in the list to zoom the camera to its position and fetch a 90-minute predicted orbit path. The orbit renders as an amber tube at the correct altitude with interval dots showing time progression. Click the satellite again (or select a different one) to dismiss the orbit.
+13. **View live webcams** — switch to the Live Cams tab and toggle the feature on. Webcams from 15 major cities load automatically with green pins on the globe. Click any webcam in the sidebar to fly to its location and open an embedded video player overlay showing the live or latest daylight feed. Webcam data refreshes every 5 minutes.
 
 ---
 
@@ -169,14 +174,17 @@ src/
 │       ├── flights/route.ts    # OpenSky Network flight data proxy (OAuth2)
 │       ├── flights/route/route.ts # Multi-strategy flight route resolver (cached)
 │       ├── satellites/route.ts # N2YO satellite data proxy (above + positions)
+│       ├── webcams/route.ts    # Windy Webcams API proxy (nearby search)
 │       └── places/
 │           ├── route.ts        # Google Nearby + Place Details proxy
 │           └── photo/route.ts  # Google Places photo proxy
 ├── components/
 │   ├── Globe.tsx               # Three.js / three-globe canvas component
-│   ├── CoordinatePanel.tsx     # Sidebar: search, pin list, route controls, presets, flights, satellites
+│   ├── CoordinatePanel.tsx     # Sidebar: search, pin list, route controls, presets, flights, satellites, webcams
 │   ├── FlightsPanel.tsx        # Flight tracker: list, filters, airline badges, route info card
 │   ├── SatellitesPanel.tsx     # Satellite tracker: category selector, list, orbit-type badges
+│   ├── WebcamsPanel.tsx        # Live webcams: toggle, search, thumbnail list, live/offline badges
+│   ├── WebcamViewer.tsx        # Overlay: embedded webcam video player with title and location info
 │   ├── PointDetailPane.tsx     # Overlay pane: place info, Street View, save to presets
 │   └── MapboxRouteMap.tsx      # Mapbox GL overlay with route + congestion
 └── lib/

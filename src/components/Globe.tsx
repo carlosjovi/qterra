@@ -5,7 +5,7 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import ThreeGlobe from "three-globe";
 import * as THREE from "three";
-import type { Coordinate, GeoJSON, Flight, FlightRoute, Satellite } from "@/lib/types";
+import type { Coordinate, GeoJSON, Flight, FlightRoute, Satellite, Webcam } from "@/lib/types";
 
 const GEOJSON_URL =
   "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_110m_admin_0_countries.geojson";
@@ -65,6 +65,8 @@ function GlobeObject({
   satellites,
   selectedSatId,
   satelliteOrbit,
+  webcams,
+  selectedWebcamId,
   onGlobeReady,
   zoomTrigger,
 }: {
@@ -79,6 +81,8 @@ function GlobeObject({
   satellites: Satellite[];
   selectedSatId: number | null;
   satelliteOrbit: Satellite[];
+  webcams: Webcam[];
+  selectedWebcamId: string | null;
   onGlobeReady?: () => void;
   zoomTrigger?: { id: number; factor: number } | null;
 }) {
@@ -88,6 +92,7 @@ function GlobeObject({
   const routeArcGroupRef = useRef<THREE.Group | null>(null);
   const satelliteGroupRef = useRef<THREE.Group | null>(null);
   const satOrbitGroupRef = useRef<THREE.Group | null>(null);
+  const webcamGroupRef = useRef<THREE.Group | null>(null);
   const groupRef = useRef<THREE.Group>(null!);
   const controlsRef = useRef<any>(null);
   const { camera } = useThree();
@@ -305,6 +310,11 @@ function GlobeObject({
     const satOrbitGroup = new THREE.Group();
     groupRef.current.add(satOrbitGroup);
     satOrbitGroupRef.current = satOrbitGroup;
+
+    // Webcam pins group
+    const webcamGroup = new THREE.Group();
+    groupRef.current.add(webcamGroup);
+    webcamGroupRef.current = webcamGroup;
 
     // Reset flight refs when the globe is rebuilt
     flightObjMapRef.current.clear();
@@ -694,6 +704,62 @@ function GlobeObject({
     }
   }, [satelliteOrbit, globeEpoch]);
 
+  // ── Render webcam pins ──
+  useEffect(() => {
+    const group = webcamGroupRef.current;
+    if (!group) return;
+
+    // Dispose previous webcam meshes
+    while (group.children.length) {
+      const child = group.children[0] as THREE.Mesh;
+      child.geometry?.dispose();
+      if (Array.isArray(child.material)) {
+        child.material.forEach((m) => m.dispose());
+      } else {
+        (child.material as THREE.Material)?.dispose();
+      }
+      group.remove(child);
+    }
+
+    if (!webcams || webcams.length === 0) return;
+
+    const GLOBE_R = 101.5; // slightly above the globe surface
+    // Shared geometry for all webcam dots
+    const dotGeom = new THREE.SphereGeometry(0.35, 8, 8);
+    const selGeom = new THREE.SphereGeometry(0.6, 12, 12);
+    const selRingGeom = new THREE.SphereGeometry(1.3, 12, 12);
+
+    for (const cam of webcams) {
+      const isSelected = cam.id === selectedWebcamId;
+      const pos = latLngToVec3(cam.lat, cam.lng, GLOBE_R);
+
+      const color = isSelected ? 0x22c55e : cam.status === "active" ? 0x4ade80 : 0x6b7280;
+      const mat = new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: isSelected ? 1.0 : 0.9,
+        depthWrite: false,
+      });
+
+      const mesh = new THREE.Mesh(isSelected ? selGeom : dotGeom, mat);
+      mesh.position.copy(pos);
+      group.add(mesh);
+
+      // Glow ring for selected webcam
+      if (isSelected) {
+        const ringMat = new THREE.MeshBasicMaterial({
+          color: 0x22c55e,
+          transparent: true,
+          opacity: 0.25,
+          depthWrite: false,
+        });
+        const ringMesh = new THREE.Mesh(selRingGeom, ringMat);
+        ringMesh.position.copy(pos);
+        group.add(ringMesh);
+      }
+    }
+  }, [webcams, selectedWebcamId, globeEpoch]);
+
   // Toggle grid visibility without rebuilding
   useEffect(() => {
     if (gridGroupRef.current) {
@@ -848,6 +914,8 @@ export default function Globe({
   satellites = [],
   selectedSatId = null,
   satelliteOrbit = [],
+  webcams = [],
+  selectedWebcamId = null,
 }: {
   coordinates?: Coordinate[];
   autoRotate?: boolean;
@@ -862,6 +930,8 @@ export default function Globe({
   satellites?: Satellite[];
   selectedSatId?: number | null;
   satelliteOrbit?: Satellite[];
+  webcams?: Webcam[];
+  selectedWebcamId?: string | null;
 }) {
   const [ready, setReady] = useState(false);
   const handleReady = useCallback(() => setReady(true), []);
@@ -949,6 +1019,8 @@ export default function Globe({
           satellites={satellites}
           selectedSatId={selectedSatId}
           satelliteOrbit={satelliteOrbit ?? []}
+          webcams={webcams}
+          selectedWebcamId={selectedWebcamId}
           onGlobeReady={handleReady}
           zoomTrigger={zoomTrigger}
         />

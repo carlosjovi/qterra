@@ -24,18 +24,21 @@ import {
   PaperPlaneIcon,
   MixIcon,
   GearIcon,
+  CameraIcon,
 } from "@radix-ui/react-icons";
 import * as SliderPrimitive from "@radix-ui/react-slider";
-import type { Coordinate, Flight, FlightRoute, Satellite, SatelliteCategory } from "@/lib/types";
+import type { Coordinate, Flight, FlightRoute, Satellite, SatelliteCategory, Webcam } from "@/lib/types";
 import FlightsPanel from "@/components/FlightsPanel";
 import SatellitesPanel from "@/components/SatellitesPanel";
+import WebcamsPanel from "@/components/WebcamsPanel";
 
-type Tab = "places" | "flights" | "satellites" | "settings";
+type Tab = "places" | "flights" | "satellites" | "webcams" | "settings";
 
 const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: "places",     label: "Places",     icon: <GlobeIcon /> },
   { id: "flights",    label: "Flights",    icon: <PaperPlaneIcon /> },
   { id: "satellites", label: "Satellites", icon: <MixIcon /> },
+  { id: "webcams",    label: "Live Cams", icon: <CameraIcon /> },
   { id: "settings",   label: "Settings",   icon: <GearIcon /> },
 ];
 
@@ -75,6 +78,14 @@ export default function CoordinatePanel({
   selectedSatId = null,
   satelliteCategory = 0 as SatelliteCategory,
   onSatelliteCategoryChange,
+  webcams = [],
+  webcamsLoading = false,
+  webcamsError = null,
+  webcamsEnabled = false,
+  onToggleWebcams,
+  onRefreshWebcams,
+  onSelectWebcam,
+  selectedWebcamId = null,
 }: {
   coordinates: Coordinate[];
   onAdd: (c: Coordinate) => void;
@@ -109,6 +120,14 @@ export default function CoordinatePanel({
   selectedSatId?: number | null;
   satelliteCategory?: SatelliteCategory;
   onSatelliteCategoryChange?: (cat: SatelliteCategory) => void;
+  webcams?: Webcam[];
+  webcamsLoading?: boolean;
+  webcamsError?: string | null;
+  webcamsEnabled?: boolean;
+  onToggleWebcams?: () => void;
+  onRefreshWebcams?: () => void;
+  onSelectWebcam?: (w: Webcam | null) => void;
+  selectedWebcamId?: string | null;
 }) {
   const [activeTab, setActiveTab] = useState<Tab>("places");
   const [searchQuery, setSearchQuery] = useState("");
@@ -477,6 +496,20 @@ export default function CoordinatePanel({
             selectedSatId={selectedSatId ?? null}
             category={satelliteCategory ?? (0 as SatelliteCategory)}
             onCategoryChange={onSatelliteCategoryChange ?? (() => {})}
+          />
+        )}
+
+        {/* ──── LIVE CAMS ──── */}
+        {activeTab === "webcams" && (
+          <WebcamsPanel
+            webcams={webcams}
+            loading={webcamsLoading}
+            error={webcamsError ?? null}
+            enabled={webcamsEnabled}
+            onToggleEnabled={onToggleWebcams ?? (() => {})}
+            onRefresh={onRefreshWebcams ?? (() => {})}
+            onSelectWebcam={onSelectWebcam ?? (() => {})}
+            selectedWebcamId={selectedWebcamId ?? null}
           />
         )}
 

@@ -130,6 +130,26 @@ export type SatelliteCategory =
   | 51  // Glonass Constellation
   | 52; // Spacebees
 
+/** A live webcam from the Windy Webcams API */
+export interface Webcam {
+  id: string;
+  title: string;
+  lat: number;
+  lng: number;
+  /** URL to a static thumbnail/preview image */
+  thumbnail: string;
+  /** URL to the embeddable player page (day or live) */
+  playerUrl: string;
+  /** Two-letter country code */
+  country: string;
+  /** City / region string */
+  city: string;
+  /** "active" | "inactive" */
+  status: string;
+  /** Last updated unix timestamp */
+  lastUpdated: number;
+}
+
 /** Flight route info resolved via SerpAPI Google Flights search */
 export interface FlightRoute {
   callsign: string; // e.g. "DAL1950"

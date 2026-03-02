@@ -5,7 +5,7 @@ import dynamic from "next/dynamic";
 import { Box, Flex, Heading, Text, Separator } from "@radix-ui/themes";
 import CoordinatePanel from "@/components/CoordinatePanel";
 import PointDetailPane from "@/components/PointDetailPane";
-import type { Coordinate, Flight, FlightRoute, Satellite, SatelliteCategory } from "@/lib/types";
+import type { Coordinate, Flight, FlightRoute, Satellite, SatelliteCategory, Webcam } from "@/lib/types";
 
 // three-globe / R3F can't SSR – dynamic import with ssr: false
 const Globe = dynamic(() => import("@/components/Globe"), { ssr: false });
@@ -13,6 +13,7 @@ const Globe = dynamic(() => import("@/components/Globe"), { ssr: false });
 // Mapbox uses the DOM heavily – no SSR
 const MapboxRouteMap = dynamic(() => import("@/components/MapboxRouteMap"), { ssr: false });
 const MapboxFlightMap = dynamic(() => import("@/components/MapboxFlightMap"), { ssr: false });
+const WebcamViewer = dynamic(() => import("@/components/WebcamViewer"), { ssr: false });
 
 type ViewMode = "globe" | "map";
 
@@ -58,6 +59,15 @@ export default function Home() {
   const [satelliteOrbitLoading, setSatelliteOrbitLoading] = useState(false);
   const satTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const satOrbitFetchRef = useRef<AbortController | null>(null);
+
+  // Webcam state
+  const [webcams, setWebcams] = useState<Webcam[]>([]);
+  const [webcamsEnabled, setWebcamsEnabled] = useState(false);
+  const [webcamsLoading, setWebcamsLoading] = useState(false);
+  const [webcamsError, setWebcamsError] = useState<string | null>(null);
+  const [selectedWebcamId, setSelectedWebcamId] = useState<string | null>(null);
+  const [viewingWebcam, setViewingWebcam] = useState<Webcam | null>(null);
+  const webcamTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchFlights = useCallback(async () => {
     setFlightsLoading(true);
@@ -160,6 +170,92 @@ export default function Home() {
 
   const handleToggleSatellites = useCallback(() => {
     setSatellitesEnabled((p) => !p);
+  }, []);
+
+  // ── Webcam fetching ──
+  const fetchWebcams = useCallback(async () => {
+    setWebcamsLoading(true);
+    setWebcamsError(null);
+    try {
+      // Fetch webcams from many major cities (radius capped at 250 km by Windy API)
+      const regions = [
+        { lat: "40.7", lng: "-74.0" },     // New York
+        { lat: "34.0", lng: "-118.2" },    // Los Angeles
+        { lat: "41.8", lng: "-87.6" },     // Chicago
+        { lat: "25.7", lng: "-80.2" },     // Miami
+        { lat: "48.8", lng: "2.3" },       // Paris
+        { lat: "51.5", lng: "-0.1" },      // London
+        { lat: "52.5", lng: "13.4" },      // Berlin
+        { lat: "41.9", lng: "12.5" },      // Rome
+        { lat: "35.6", lng: "139.6" },     // Tokyo
+        { lat: "22.3", lng: "114.1" },     // Hong Kong
+        { lat: "-33.8", lng: "151.2" },    // Sydney
+        { lat: "30.0", lng: "31.2" },      // Cairo
+        { lat: "55.7", lng: "37.6" },      // Moscow
+        { lat: "-22.9", lng: "-43.1" },    // Rio de Janeiro
+        { lat: "1.3", lng: "103.8" },      // Singapore
+      ];
+      const fetches = regions.map((r) => {
+        const params = new URLSearchParams({
+          lat: r.lat,
+          lng: r.lng,
+          radius: "250",
+          limit: "50",
+        });
+        return fetch(`/api/webcams?${params}`).then((res) => res.json());
+      });
+      const results = await Promise.all(fetches);
+      // Merge & deduplicate by id
+      const seen = new Map<string, Webcam>();
+      for (const data of results) {
+        if (data.webcams) {
+          for (const w of data.webcams) {
+            seen.set(w.id, w);
+          }
+        }
+      }
+      setWebcams([...seen.values()]);
+      const firstError = results.find((d: any) => d.error);
+      if (seen.size === 0 && firstError) {
+        setWebcamsError(firstError.error);
+      }
+    } catch {
+      setWebcamsError("Network error loading webcams");
+    } finally {
+      setWebcamsLoading(false);
+    }
+  }, []);
+
+  // Auto-fetch when enabled
+  useEffect(() => {
+    if (webcamsEnabled) {
+      fetchWebcams();
+      webcamTimerRef.current = setInterval(fetchWebcams, 300_000); // refresh every 5 min
+    } else {
+      setWebcams([]);
+      setSelectedWebcamId(null);
+      setViewingWebcam(null);
+      if (webcamTimerRef.current) clearInterval(webcamTimerRef.current);
+    }
+    return () => {
+      if (webcamTimerRef.current) clearInterval(webcamTimerRef.current);
+    };
+  }, [webcamsEnabled, fetchWebcams]);
+
+  const handleToggleWebcams = useCallback(() => {
+    setWebcamsEnabled((p) => !p);
+  }, []);
+
+  const handleSelectWebcam = useCallback((w: Webcam | null) => {
+    setSelectedWebcamId(w?.id ?? null);
+    if (w) {
+      setAutoRotate(false);
+      setFocusTarget({ id: `__webcam_${w.id}`, lat: w.lat, lng: w.lng, label: w.title });
+      // Open the viewer overlay
+      setViewingWebcam(w);
+    } else {
+      setViewingWebcam(null);
+    }
   }, []);
 
   const handleSatelliteCategoryChange = useCallback((cat: SatelliteCategory) => {
@@ -394,6 +490,14 @@ export default function Home() {
           selectedSatId={selectedSatId}
           satelliteCategory={satelliteCategory}
           onSatelliteCategoryChange={handleSatelliteCategoryChange}
+          webcams={webcams}
+          webcamsLoading={webcamsLoading}
+          webcamsError={webcamsError}
+          webcamsEnabled={webcamsEnabled}
+          onToggleWebcams={handleToggleWebcams}
+          onRefreshWebcams={fetchWebcams}
+          onSelectWebcam={handleSelectWebcam}
+          selectedWebcamId={selectedWebcamId}
         />
         </div>
       </aside>
@@ -415,6 +519,8 @@ export default function Home() {
             satellites={satellites}
             selectedSatId={selectedSatId}
             satelliteOrbit={satelliteOrbit}
+            webcams={webcams}
+            selectedWebcamId={selectedWebcamId}
           />
         ) : (
           <MapboxFlightMap
@@ -475,6 +581,17 @@ export default function Home() {
               onSaved={() => setPresetRefreshKey((k) => k + 1)}
             />
           </div>
+        )}
+
+        {/* Webcam viewer overlay */}
+        {viewingWebcam && (
+          <WebcamViewer
+            webcam={viewingWebcam}
+            onClose={() => {
+              setViewingWebcam(null);
+              setSelectedWebcamId(null);
+            }}
+          />
         )}
       </div>
     </main>
